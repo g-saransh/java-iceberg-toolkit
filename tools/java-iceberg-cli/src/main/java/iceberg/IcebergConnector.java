@@ -446,6 +446,11 @@ public class IcebergConnector extends MetastoreConnector
         
         PartitionSpec ps = iceberg_table.spec();
 
+        // Checking whether separate source credentials are declared.
+        // If yes, use those, other set it to the default credentials.
+        // We also need to set the source configuration accordingly,
+        // for hadoop FileSystem to use it correctly.
+
         AwsBasicCredentials awsCreds;
         String srcAccessKeyId = System.getenv("SOURCE_AWS_ACCESS_KEY_ID");
         String srcSecretKey = System.getenv("SOURCE_AWS_SECRET_ACCESS_KEY");
