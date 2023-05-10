@@ -446,16 +446,33 @@ public class IcebergConnector extends MetastoreConnector
         
         PartitionSpec ps = iceberg_table.spec();
 
-        AwsBasicCredentials awsCreds = AwsBasicCredentials.create(
-                System.getenv("AWS_ACCESS_KEY_ID"),
-                System.getenv("AWS_SECRET_ACCESS_KEY"));
+        AwsBasicCredentials awsCreds;
+        String srcAccessKeyId = System.getenv("SOURCE_AWS_ACCESS_KEY_ID");
+        String srcSecretKey = System.getenv("SOURCE_AWS_SECRET_ACCESS_KEY");
+        String srcRegion = System.getenv("SOURCE_AWS_REGION");
+        Configuration srcConfig = m_catalog.getConf();
+        
+        if((srcAccessKeyId != null) && (srcSecretKey != null)) {
+            awsCreds = AwsBasicCredentials.create(srcAccessKeyId, srcSecretKey);
+            srcConfig.set("fs.s3a.access.key", srcAccessKeyId);
+            srcConfig.set("fs.s3a.secret.key", srcSecretKey);
+        } else {
+            awsCreds = AwsBasicCredentials.create(
+                    System.getenv("AWS_ACCESS_KEY_ID"),
+                    System.getenv("AWS_SECRET_ACCESS_KEY"));
+        }
+
+        if (srcRegion == null) {
+            srcRegion = System.getenv("AWS_REGION");
+        }
+        final String srcRegion_final = srcRegion;
 
         SdkHttpClient client = ApacheHttpClient.builder()
                 .maxConnections(100)
                 .build();
 
         SerializableSupplier<S3Client> supplier = () -> S3Client.builder()
-                .region(Region.of(System.getenv("AWS_REGION")))
+                .region(Region.of(srcRegion_final))
                 .credentialsProvider(StaticCredentialsProvider.create(awsCreds))
                 .httpClient(client)
                 .build();
