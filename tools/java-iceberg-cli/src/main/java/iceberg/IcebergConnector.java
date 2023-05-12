@@ -438,6 +438,25 @@ public class IcebergConnector extends MetastoreConnector
     	}
     }
 
+    AwsBasicCredentials getSourceAwsCreds() {
+        // Checking whether secondary credentials are declared. 
+        // If yes, use those for the source files, other set it to the default credentials.
+        
+        AwsBasicCredentials awsCreds;
+        String srcAccessKeyId = System.getenv("SECONDARY_AWS_ACCESS_KEY_ID");
+        String srcSecretKey = System.getenv("SECONDARY_AWS_SECRET_ACCESS_KEY");
+        
+        if((srcAccessKeyId != null) && (srcSecretKey != null)) {
+            awsCreds = AwsBasicCredentials.create(srcAccessKeyId, srcSecretKey);
+        } else {
+            awsCreds = AwsBasicCredentials.create(
+                    System.getenv("AWS_ACCESS_KEY_ID"),
+                    System.getenv("AWS_SECRET_ACCESS_KEY"));
+        }
+
+        return awsCreds;
+    }
+
     public boolean commitTable(String dataFiles) throws Exception {
         if (iceberg_table == null)
             loadTable();
@@ -446,38 +465,29 @@ public class IcebergConnector extends MetastoreConnector
         
         PartitionSpec ps = iceberg_table.spec();
 
-        // Checking whether separate source credentials are declared.
-        // If yes, use those, other set it to the default credentials.
-        // We also need to set the source configuration accordingly,
-        // for hadoop FileSystem to use it correctly.
-
-        AwsBasicCredentials awsCreds;
-        String srcAccessKeyId = System.getenv("SOURCE_AWS_ACCESS_KEY_ID");
-        String srcSecretKey = System.getenv("SOURCE_AWS_SECRET_ACCESS_KEY");
-        String srcRegion = System.getenv("SOURCE_AWS_REGION");
-        Configuration srcConfig = m_catalog.getConf();
-        
-        if((srcAccessKeyId != null) && (srcSecretKey != null)) {
-            awsCreds = AwsBasicCredentials.create(srcAccessKeyId, srcSecretKey);
-            srcConfig.set("fs.s3a.access.key", srcAccessKeyId);
-            srcConfig.set("fs.s3a.secret.key", srcSecretKey);
+        AwsBasicCredentials awsCreds = getSourceAwsCreds();
+       
+        String srcRegion;
+        if (System.getenv("SECONDARY_AWS_REGION") != null) {
+            srcRegion = System.getenv("SECONDARY_AWS_REGION");
         } else {
-            awsCreds = AwsBasicCredentials.create(
-                    System.getenv("AWS_ACCESS_KEY_ID"),
-                    System.getenv("AWS_SECRET_ACCESS_KEY"));
-        }
-
-        if (srcRegion == null) {
             srcRegion = System.getenv("AWS_REGION");
         }
-        final String srcRegion_final = srcRegion;
+        // final String srcRegion_final = srcRegion;
+
+        // We also need to set the source configuration accordingly,
+        // for hadoop FileSystem to use it correctly.
+        // The catalog and destination files (if any) should use the main credentials.
+        Configuration srcConfig = m_catalog.getConf();
+        srcConfig.set("fs.s3a.access.key", awsCreds.accessKeyId());
+        srcConfig.set("fs.s3a.secret.key", awsCreds.secretAccessKey());
 
         SdkHttpClient client = ApacheHttpClient.builder()
                 .maxConnections(100)
                 .build();
 
         SerializableSupplier<S3Client> supplier = () -> S3Client.builder()
-                .region(Region.of(srcRegion_final))
+                .region(Region.of(srcRegion))
                 .credentialsProvider(StaticCredentialsProvider.create(awsCreds))
                 .httpClient(client)
                 .build();
