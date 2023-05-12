@@ -658,11 +658,11 @@ public class IcebergConnector extends MetastoreConnector
         return data;
     }
 
-    public boolean rewriteFiles(String dataFilesDel, String dataFilesAdd) throws Exception {
+    public boolean rewriteFiles(String dataFiles) throws Exception {
         if (iceberg_table == null)
             loadTable();
         
-        System.out.println("Commiting to the table " + m_tableIdentifier);
+        System.out.println("Rewriting files in the table " + m_tableIdentifier);
 
         AwsBasicCredentials oldAwsCreds = getSourceAwsCreds();
         AwsBasicCredentials newAwsCreds = getTargetAwsCreds();
@@ -706,8 +706,8 @@ public class IcebergConnector extends MetastoreConnector
         
         S3FileIO newIo = new S3FileIO(newSupplier);
 
-        JSONArray oldFiles = new JSONObject(dataFilesDel).getJSONArray("files");
-        JSONArray newFiles = new JSONObject(dataFilesAdd).getJSONArray("files");
+        JSONArray oldFiles = new JSONObject(dataFiles).getJSONArray("files_to_del");
+        JSONArray newFiles = new JSONObject(dataFiles).getJSONArray("files_to_add");
         
         Set<DataFile> oldDataFiles = new HashSet<DataFile>();
         Set<DataFile> newDataFiles = new HashSet<DataFile>();
