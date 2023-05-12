@@ -155,5 +155,11 @@ public class Parser {
         rename.addArgument("identifier", "Table identifier", true);
         rename.addArgument("to_identifier", "New table identifier", true);
         m_commands.put("rename", rename);
+
+        Command rewrite = new Command("rewrite", "Rewrite (replace) file(s) in a table");
+        rewrite.addOption("--help", "Show this help message and exit");
+        rewrite.addArgument("identifier", "Table identifier", true);
+        rewrite.addArgument("data-files", "Data file(s) to replace and data file(s) add", true);
+        m_commands.put("rewrite", rewrite);
     }
 }

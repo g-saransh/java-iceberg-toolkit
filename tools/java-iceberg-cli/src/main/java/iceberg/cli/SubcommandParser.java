@@ -79,6 +79,7 @@ public class SubcommandParser {
             case "uuid":
             case "rename":
             case "commit":
+            case "rewrite":
             case "write":
             case "location":
             case "type":
