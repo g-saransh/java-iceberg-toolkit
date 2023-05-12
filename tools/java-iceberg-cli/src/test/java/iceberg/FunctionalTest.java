@@ -175,6 +175,34 @@ class FunctionalTest {
             throw new ServletException("Error: " + t.getMessage(), t);
         }
     }
+
+    @Test
+    @Order(7)
+    @DisplayName("Test the functionality of rewrite files")
+    void rewritefiles() throws ServletException {
+        try {
+            metaConn = new IcebergConnector(uri, warehouse, namespace, tablename);
+            metaConnDup = new IcebergConnector(uri, warehouse, namespace, (tablename + "Dup"));
+            Schema schema = SchemaParser.fromJson("{\"type\":\"struct\",\"schema-id\":0,\"fields\":[{\"id\":1,\"name\":\"ID\",\"required\":true,\"type\":\"int\"},{\"id\":2,\"name\":\"Name\",\"required\":true,\"type\":\"string\"},{\"id\":3,\"name\":\"Price\",\"required\":true,\"type\":\"double\"},{\"id\":4,\"name\":\"Purchase_date\",\"required\":true,\"type\":\"timestamp\"}]}");
+            
+            System.out.println("Running test 7...");
+            
+            String record = "{\"records\":[{\"ID\":1,\"Name\":\"Testing\",\"Price\": 1000,\"Purchase_date\":\"2022-11-09T12:13:54.480\"}]}";
+
+            String dataFiles = metaConn.writeTable(record, null);
+
+            boolean status = metaConnDup.createTable(schema, null, false);
+            String dataFilesDup = metaConnDup.writeTable(record, null);
+            
+            boolean status = metaConn.rewriteFiles(dataFiles, dataFilesDup);
+            Assertions.assertEquals(true, status); 
+            System.out.println("Test 7 completed");
+            passed_tests += 1;
+        } catch (Throwable t) {
+            failed_tests.add("rewritefiles");
+            throw new ServletException("Error: " + t.getMessage(), t);
+        }
+    }
     
     @AfterAll
     static void result() {
