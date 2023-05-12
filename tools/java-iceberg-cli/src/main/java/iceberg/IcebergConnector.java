@@ -32,6 +32,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.RewriteFiles;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.LocationProvider;
@@ -457,6 +458,13 @@ public class IcebergConnector extends MetastoreConnector
         return awsCreds;
     }
 
+    AwsBasicCredentials getTargetAwsCreds() {
+        AwsBasicCredentials awsCreds = AwsBasicCredentials.create(
+                    System.getenv("AWS_ACCESS_KEY_ID"),
+                    System.getenv("AWS_SECRET_ACCESS_KEY"));
+        return awsCreds;
+    }
+
     public boolean commitTable(String dataFiles) throws Exception {
         if (iceberg_table == null)
             loadTable();
@@ -529,7 +537,7 @@ public class IcebergConnector extends MetastoreConnector
 
             if(fileSize == null) {
             	try {
-            		FileSystem fs = FileSystem.get(new URI(outputFile.location()), m_catalog.getConf());
+            		FileSystem fs = FileSystem.get(new URI(outputFile.location()), srcConfig);
             		FileStatus fstatus = fs.getFileStatus(new Path(outputFile.location()));
             		fileSize = fstatus.getLen();
             	} catch (Exception e) {
@@ -576,6 +584,189 @@ public class IcebergConnector extends MetastoreConnector
         append.commit();
         transaction.commitTransaction();
         io.close();
+        System.out.println("Txn Complete!");
+        
+        return true;
+    }
+
+    DataFile getDataFile(S3FileIO io, Configuration config, String filePath, String fileFormatStr, Long fileSize, Long numRecords) throws Exception {
+        PartitionSpec ps = iceberg_table.spec();
+        
+        OutputFile outputFile = io.newOutputFile(filePath);
+
+        if(fileFormatStr == null) {
+            // if file format is not provided, we'll try to infer from the file extension (if any)
+            String fileLocation = outputFile.location();
+            if(fileLocation.contains("."))
+                fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
+            else
+                fileFormatStr = "";
+        }
+
+        FileFormat fileFormat = null;
+        if(fileFormatStr.isEmpty())
+            throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
+        else if(fileFormatStr.toLowerCase().equals("parquet"))
+            fileFormat = FileFormat.PARQUET;
+        else
+            throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
+
+        if(fileSize == null) {
+            try {
+                FileSystem fs = FileSystem.get(new URI(outputFile.location()), config);
+                FileStatus fstatus = fs.getFileStatus(new Path(outputFile.location()));
+                fileSize = fstatus.getLen();
+            } catch (Exception e) {
+                throw new Exception("Unable to infer the filesize of the file to be committed: " + outputFile.location());
+            }
+        }
+
+        if (numRecords == null) {
+            try {
+                /* The apache parquet reader code wants a type of apache.parquet.io.InputFile, however the iceberg apis have no way
+                    * to provide that object and the apache.iceberg.io.InputFile may not be passed to the parquet read functions directly.
+                    * the iceberg apis want to prevent you from reading the parquet files directly and instead push you to go through
+                    * it's own built in reader classes...but we cannot use those builtin reader classes because they require a scan of
+                    * the iceberg table...which we haven't committed these files to yet. Internally iceberg provides a ParquetIO
+                    * class which accepts an apache.iceberg.io.InputFile and implements the apache.parquet.io.InputFile interface, and this
+                    * is what is then used to read the parquet files within their tablescan code. Since this class is private, it can only be
+                    * instantiated using reflection, but we can make use of it to directly open the parquet file to collect the row count.
+                    */
+                Class<?> pifClass = Class.forName("org.apache.iceberg.parquet.ParquetIO");
+                Constructor<?> pifCstr =pifClass.getDeclaredConstructor();
+                pifCstr.setAccessible(true);
+                Object pifInst = pifCstr.newInstance();
+                Method pifMthd = pifClass.getDeclaredMethod("file", org.apache.iceberg.io.InputFile.class);
+                pifMthd.setAccessible(true);
+                org.apache.iceberg.io.InputFile pif = io.newInputFile(outputFile.location());
+                Object parquetInputFile = pifMthd.invoke(pifInst, pif);
+
+                ParquetFileReader reader = ParquetFileReader.open((InputFile) parquetInputFile);
+                numRecords = reader.getRecordCount();
+            } catch (Exception e) {
+                throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
+            }
+        }
+
+        DataFile data = DataFiles.builder(ps)
+                .withPath(outputFile.location())
+                .withFormat(fileFormat)
+                .withFileSizeInBytes(fileSize)
+                .withRecordCount(numRecords)
+                .build();
+
+        return data;
+    }
+
+    public boolean rewriteFiles(String dataFilesDel, String dataFilesAdd) throws Exception {
+        if (iceberg_table == null)
+            loadTable();
+        
+        System.out.println("Commiting to the table " + m_tableIdentifier);
+
+        AwsBasicCredentials oldAwsCreds = getSourceAwsCreds();
+        AwsBasicCredentials newAwsCreds = getTargetAwsCreds();
+        String newRegion = System.getenv("AWS_REGION");
+        String oldRegion;
+
+        if (System.getenv("SECONDARY_AWS_REGION") != null) {
+            oldRegion = System.getenv("SECONDARY_AWS_REGION");
+        } else {
+            oldRegion = newRegion;
+        }
+        // final String oldRegion_final = oldRegion;
+
+
+
+        // We also need to set the source configuration accordingly,
+        // for hadoop FileSystem to use it correctly.
+        // The catalog and destination files (if any) should use the main credentials.
+        Configuration oldConfig = m_catalog.getConf();
+        Configuration newConfig = m_catalog.getConf();
+        oldConfig.set("fs.s3a.access.key", oldAwsCreds.accessKeyId());
+        oldConfig.set("fs.s3a.secret.key", oldAwsCreds.secretAccessKey());
+
+        SdkHttpClient client = ApacheHttpClient.builder()
+                .maxConnections(100)
+                .build();
+
+        SerializableSupplier<S3Client> oldSupplier = () -> S3Client.builder()
+                .region(Region.of(oldRegion))
+                .credentialsProvider(StaticCredentialsProvider.create(oldAwsCreds))
+                .httpClient(client)
+                .build();
+        
+        S3FileIO oldIo = new S3FileIO(oldSupplier);
+        
+        SerializableSupplier<S3Client> newSupplier = () -> S3Client.builder()
+                .region(Region.of(newRegion))
+                .credentialsProvider(StaticCredentialsProvider.create(newAwsCreds))
+                .httpClient(client)
+                .build();
+        
+        S3FileIO newIo = new S3FileIO(newSupplier);
+
+        JSONArray oldFiles = new JSONObject(dataFilesDel).getJSONArray("files");
+        JSONArray newFiles = new JSONObject(dataFilesAdd).getJSONArray("files");
+        
+        Set<DataFile> oldDataFiles = new HashSet<DataFile>();
+        Set<DataFile> newDataFiles = new HashSet<DataFile>();
+
+        if (oldFiles.length() != newFiles.length()) {
+            System.out.println("The numbers of old files and new files are different."
+                                + "Aborting...");
+            return false;
+        }
+        // To Test: If the order of files in the set matters
+
+        
+        for (int index = 0; index < newFiles.length(); ++index) {
+            JSONObject newFile = newFiles.getJSONObject(index);
+            JSONObject oldFile = oldFiles.getJSONObject(index);
+
+            // Required
+            String newFilePath = newFile.getString("file_path");            
+            String oldFilePath = oldFile.getString("file_path");
+            
+            // Optional (but slower if not given)
+            String newFileFormatStr = getJsonStringOrDefault(newFile, "file_format", null);
+            Long newFileSize = getJsonLongOrDefault(newFile, "file_size_in_bytes", null);
+            Long newNumRecords = getJsonLongOrDefault(newFile, "record_count", null);
+            String oldFileFormatStr = getJsonStringOrDefault(oldFile, "file_format", null);
+            Long oldFileSize = getJsonLongOrDefault(oldFile, "file_size_in_bytes", null);
+            Long oldNumRecords = getJsonLongOrDefault(oldFile, "record_count", null);
+            
+            try {
+                newDataFiles.add(getDataFile(
+                    newIo,
+                    newConfig,
+                    newFilePath,
+                    newFileFormatStr,
+                    newFileSize,
+                    newNumRecords));
+
+                oldDataFiles.add(getDataFile(
+                    oldIo,
+                    oldConfig,
+                    oldFilePath,
+                    oldFileFormatStr,
+                    oldFileSize,
+                    oldNumRecords));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            } 
+        }
+
+        Transaction transaction = iceberg_table.newTransaction();
+        RewriteFiles rewrite = transaction.newRewrite();
+        
+        // Rewrite data files
+        System.out.println("Starting Txn");
+        rewrite.rewriteFiles(oldDataFiles, newDataFiles);
+        rewrite.commit();
+        transaction.commitTransaction();
+        oldIo.close();
+        newIo.close();
         System.out.println("Txn Complete!");
         
         return true;
