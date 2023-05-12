@@ -227,6 +227,12 @@ public class HiveConnector extends MetastoreConnector
     }
 
     @Override
+    public boolean rewriteFiles(String dataFileName) throws Exception {
+        // TODO Auto-generated method stub
+        throw new Exception("Hive functionaility not supported yet.");
+    }
+
+    @Override
     public Schema getTableSchema() {
         List<FieldSchema> schema;
         try {
