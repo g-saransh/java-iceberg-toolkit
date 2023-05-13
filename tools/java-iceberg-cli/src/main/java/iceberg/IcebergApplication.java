@@ -142,8 +142,8 @@ public class IcebergApplication {
             output = "Operation successful? " + connector.commitTable(dataFile);
             break;
         case "rewrite":
-            String dataFiles = parser.getPositionalArg("data-files");
-            output = "Operation successful? " + connector.rewriteFiles(dataFiles);
+            String rwDataFiles = parser.getPositionalArg("data-files");
+            output = "Operation successful? " + connector.rewriteFiles(rwDataFiles);
             break;
         case "drop":
             if (tableName != null)
