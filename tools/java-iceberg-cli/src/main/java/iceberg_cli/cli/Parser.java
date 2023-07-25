@@ -156,6 +156,12 @@ public class Parser {
         tasks.addOption("--help", "Show this help message and exit");
         tasks.addArgument("identifier", "Table identifier", true);
         m_commands.put("tasks", tasks);
+
+        Command transaction = new Command("transaction", "Commit a transaction consisting of one or more of these operations: append, delete, overwrite, rewrite, rowdelta");
+        transaction.addOption("--help", "Show this help message and exit");
+        transaction.addArgument("identifier", "Table identifier", true);
+        transaction.addArgument("transaction-data", "Operation(s) with the corresponding data and delete file(s)", true);
+        m_commands.put("transaction", transaction);
         
         Command type = new Command("type", "Fetch table type");
         type.addOption("--help", "Show this help message and exit");
