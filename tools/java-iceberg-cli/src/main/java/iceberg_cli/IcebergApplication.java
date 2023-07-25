@@ -163,6 +163,10 @@ public class IcebergApplication {
             String rwDataFiles = parser.getPositionalArg("data-files");
             output = "Operation successful? " + connector.rewriteFiles(rwDataFiles);
             break;
+        case "transaction":
+            String transactionData = parser.getPositionalArg("transaction-data");
+            output = "Operation successful? " + connector.tableTransaction(transactionData);
+            break;
         case "drop":
             if (tableName != null)
                 output = "Operation successful? " + connector.dropTable();
@@ -199,6 +203,8 @@ public class IcebergApplication {
             case "uuid":
             case "rename":
             case "commit":
+            case "rewrite":
+            case "transaction":
             case "write":
             case "location":
             case "metadata":

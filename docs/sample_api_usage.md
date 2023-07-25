@@ -10,10 +10,11 @@ java-iceberg-toolkit provides APIs to perform operations on Iceberg tables and H
 * [Iceberg Table Operations](/docs/sample_api_usage.md#iceberg-table-operations)
     1. [Create](/docs/sample_api_usage.md#create)
     2. [Write/Commit/Rewrite](/docs/sample_api_usage.md#writecommitrewrite)
-    3. [Read](/docs/sample_api_usage.md#read)
-    4. [Details](/docs/sample_api_usage.md#details)
-    5. [Table Information](/docs/sample_api_usage.md#table-information-1)
-    6. [Drop](/docs/sample_api_usage.md#drop)
+    3. [Transactions](/docs/sample_api_usage.md#transactions)
+    4. [Read](/docs/sample_api_usage.md#read)
+    5. [Details](/docs/sample_api_usage.md#details)
+    6. [Table Information](/docs/sample_api_usage.md#table-information-1)
+    7. [Drop](/docs/sample_api_usage.md#drop)
 
 ## Hive Table Operations
 
@@ -102,6 +103,16 @@ import iceberg.IcebergConnector;
 IcebergConnector connector = new IcebergConnector(uri, warehouse, namespace, table);
 String dataFiles = '{"files_to_del":[{"file_path":"path_a"}], "files_to_add":[{"file_path":"path_b"}]}';
 connector.rewriteFiles(dataFiles);
+```
+
+### Transactions
+* Commit a transaction consisting of one or more of these operations: append, delete, overwrite, rewrite, rowdelta. 
+```
+import iceberg.IcebergConnector;
+
+IcebergConnector connector = new IcebergConnector(uri, warehouse, namespace, table);
+String transactionData = '[{"op":"append", "files_to_add":[{"file_path":"path_b"}]}, {"op":"rewrite", "files_to_del":[{"file_path":"path_a"}], "files_to_add":[{"file_path":"path_b"}]}]';
+connector.transaction(transactionData);
 ```
 
 ### Read
