@@ -29,10 +29,12 @@ import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.DeleteFiles;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.OverwriteFiles;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.RewriteFiles;
 import org.apache.iceberg.RowDelta;
@@ -877,52 +879,41 @@ public class IcebergConnector extends MetastoreConnector
     }
     
     public AppendFiles opAppend(AppendFiles append, FileIO io, JSONArray files) throws Exception {
-        for (int index = 0; index < files.length(); ++index) {
-            JSONObject file = files.getJSONObject(index);
-            // Required
-            String filePath = file.getString("file_path");
-
-            // Optional (but slower if not given)
-            String fileFormatStr = getJsonStringOrDefault(file, "file_format", null);
-            Long fileSize = getJsonLongOrDefault(file, "file_size_in_bytes", null);
-            Long numRecords = getJsonLongOrDefault(file, "record_count", null);
-            
-            try {
-                append.appendFile(getDataFile(
-                    io,
-                    filePath,
-                    fileFormatStr,
-                    fileSize,
-                    numRecords));
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            } 
-        }
+        Set<DataFile> dataFiles = getDataFileSet(io, files);
+        for (DataFile dataFile : dataFiles)
+            append.appendFile(dataFile);
         return append;
     }
 
+    public DeleteFiles opDelete(DeleteFiles delete, FileIO io, JSONArray files) throws Exception {
+        for (int index = 0; index < files.length(); ++index) {
+            JSONObject file = files.getJSONObject(index);
+            String filePath = file.getString("file_path");
+            delete.deleteFile(filePath);
+        }
+        return delete;
+    }
+
+    public OverwriteFiles opOverwrite(OverwriteFiles overwrite, FileIO io, JSONArray files_to_del, JSONArray files_to_add) throws Exception {
+        Set<DataFile> oldDataFiles = getDataFileSet(io, files_to_del);
+        Set<DataFile> newDataFiles = getDataFileSet(io, files_to_add);
+        for (DataFile dataFile : oldDataFiles)
+            overwrite.deleteFile(dataFile);
+        for (DataFile dataFile : newDataFiles)
+            overwrite.addFile(dataFile);
+        return overwrite;
+    }
+
     public RewriteFiles opRewrite(RewriteFiles rewrite, FileIO io, JSONArray files_to_del, JSONArray files_to_add) throws Exception {
-        Set<DataFile> oldDataFiles = new HashSet<DataFile>();
-        Set<DataFile> newDataFiles = new HashSet<DataFile>();
-        try {
-            oldDataFiles = getDataFileSet(io, files_to_del);
-            newDataFiles = getDataFileSet(io, files_to_add);
-        } catch (Exception e) {
-                throw new RuntimeException(e);
-        } 
+        Set<DataFile> oldDataFiles = getDataFileSet(io, files_to_del);
+        Set<DataFile> newDataFiles = getDataFileSet(io, files_to_add);
         rewrite.rewriteFiles(oldDataFiles, newDataFiles);
         return rewrite;
     }
 
     public RowDelta opRowDelta(RowDelta rowDelta, FileIO io, JSONArray files_to_del, JSONArray files_to_add) throws Exception {
-        Set<DeleteFile> deleteFiles = new HashSet<DeleteFile>();
-        Set<DataFile> dataFiles = new HashSet<DataFile>();
-        try {
-            deleteFiles = getDeleteFileSet(io, files_to_del);
-            dataFiles = getDataFileSet(io, files_to_add);
-        } catch (Exception e) {
-                throw new RuntimeException(e);
-        } 
+        Set<DeleteFile> deleteFiles = getDeleteFileSet(io, files_to_del);
+        Set<DataFile> dataFiles = getDataFileSet(io, files_to_add);
         for (DeleteFile deleteFile : deleteFiles)
             rowDelta.addDeletes(deleteFile);
         for (DataFile dataFile : dataFiles)
@@ -933,50 +924,35 @@ public class IcebergConnector extends MetastoreConnector
     public boolean tableTransaction(String transactionData) throws Exception {
         if (iceberg_table == null)
             loadTable();
-        
-        // AppendFiles
-        // DeleteFiles
-        // OverwriteFiles
-        // ReplacePartitions
-        // RewriteFiles
-        // RowDelta
-        
+
         System.out.println("Commiting transaction to the Iceberg table");
-        
         PartitionSpec ps = iceberg_table.spec();
-        
-        // FileIO io = new ResolvingFileIO();
-        // if (transactionData.contains("s3://")) {
-        //     // TODO: Add S3 properties
-        //     // io.initialize();
-        // }
-
         S3FileIO io = initS3FileIO();
-        Transaction transaction = iceberg_table.newTransaction();
         
-        System.out.println(transactionData);
+        Transaction transaction = iceberg_table.newTransaction();
         JSONArray ops = new JSONArray(transactionData);
-
         System.out.println("Starting Txn");
 
         for (int index = 0; index < ops.length(); ++index) {
             JSONObject op_data = ops.getJSONObject(index);
             String op = op_data.getString("op");
             
-            // case(op):
             try {
                 switch(op.toLowerCase()) {
                     case "append":
                         AppendFiles append = transaction.newAppend();
                         append = opAppend(append, io, op_data.getJSONArray("files_to_add"));
                         append.commit();
-                        System.out.println("Done: " + op);
                         break;
                     case "delete":
-                        //
+                        DeleteFiles delete = transaction.newDelete();
+                        delete = opDelete(delete, io, op_data.getJSONArray("files_to_del"));
+                        delete.commit();
                         break;
                     case "overwrite":
-                        //
+                        OverwriteFiles overwrite = transaction.newOverwrite();
+                        overwrite = opOverwrite(overwrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
+                        overwrite.commit();
                         break;
                     case "rewrite":
                         RewriteFiles rewrite = transaction.newRewrite();
@@ -996,7 +972,6 @@ public class IcebergConnector extends MetastoreConnector
             }
         }
 
-        // append.commit();
         transaction.commitTransaction();
         io.close();
         System.out.println("Txn Complete!");
