@@ -5,6 +5,7 @@
 package iceberg_cli;
 
 import java.util.*;
+import java.util.stream.Collectors;
 import java.io.File;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -441,7 +442,7 @@ public class IcebergConnector extends MetastoreConnector
     
     public java.util.List<String> listTables(String namespace) {
         List<TableIdentifier> tables = m_catalog.listTables(Namespace.of(namespace));
-        return tables.stream().map(TableIdentifier::name).toList();
+        return tables.stream().map(TableIdentifier::name).collect(Collectors.toList());
     }
     
     public java.util.List<Namespace> listNamespaces() {

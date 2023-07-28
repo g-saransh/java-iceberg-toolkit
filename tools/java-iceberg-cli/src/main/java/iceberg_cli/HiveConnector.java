@@ -12,6 +12,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.hive.HiveSchemaUtil;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -184,7 +185,7 @@ public class HiveConnector extends MetastoreConnector
     
     @Override
     public List<Namespace> listNamespaces() throws Exception {
-        return hiveClient.getAllDatabases().stream().map(Namespace::of).toList();
+        return hiveClient.getAllDatabases().stream().map(Namespace::of).collect(Collectors.toList());
     }
     
     @Override
