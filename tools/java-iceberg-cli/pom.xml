@@ -17,8 +17,9 @@
 		<org.apache.hive.version>4.0.0-alpha-2</org.apache.hive.version>
 		<org.junit.jupiter.version>5.8.1</org.junit.jupiter.version>
 		<software.amazon.awssdk.version>2.17.272</software.amazon.awssdk.version>
-		<maven.compiler.source>17</maven.compiler.source>
-		<maven.compiler.target>17</maven.compiler.target>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
+		<!-- <maven.compiler.release>1.8</maven.compiler.release> -->
 	</properties>
 	
 	<dependencies>
@@ -133,7 +134,7 @@
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-beans</artifactId>
-			<version>6.0.8</version>
+			<version>5.3.29</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.atlas</groupId>
@@ -164,7 +165,7 @@
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-expression</artifactId>
-			<version>6.0.8</version>
+			<version>5.3.29</version>
 		</dependency>
 		<dependency>
 			<groupId>net.minidev</groupId>
@@ -184,7 +185,7 @@
 		<dependency>
 			<groupId>org.apache.thrift</groupId>
 			<artifactId>libthrift</artifactId>
-			<version>0.18.1</version>
+			<version>0.17.0</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.calcite</groupId>
@@ -199,7 +200,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-dbcp2</artifactId>
-			<version>2.9.0</version>
+			<version>2.0.1</version>
 		</dependency>
 		<dependency>
 			<groupId>org.bouncycastle</groupId>

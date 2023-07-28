@@ -11,8 +11,9 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.FileOutputStream;
+import java.net.InetSocketAddress;
 import java.net.StandardProtocolFamily;
-import java.net.UnixDomainSocketAddress;
+// import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.ServerSocketChannel;
@@ -34,7 +35,8 @@ import java.util.concurrent.TimeUnit;
  *
  */
 public class SocketServer {
-    private final String unixAddress = "/tmp/iceberg_service.server";
+    // private final String unixAddress = "/tmp/iceberg_service.server";
+    private final int port = 1234;
     private final ServerSocketChannel serverChannel;
     private final ExecutorService pool;
     private final Integer minNumThreads = 10;
@@ -45,12 +47,14 @@ public class SocketServer {
      * @throws IOException
      */
     public SocketServer() throws IOException {
-        UnixDomainSocketAddress socketAddress = UnixDomainSocketAddress.of(unixAddress);
-        serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+        // UnixDomainSocketAddress socketAddress = UnixDomainSocketAddress.of(unixAddress);
+        // serverChannel = ServerSocketChannel.open(StandardProtocolFamily.INET);
+        serverChannel = ServerSocketChannel.open();
+        
         // Delete the file if it already exists
-        Files.deleteIfExists(Path.of(unixAddress));
+        // Files.deleteIfExists(Path.of(unixAddress));
         // Bind to the socket Address
-        serverChannel.bind(socketAddress);
+        serverChannel.bind(new InetSocketAddress(port));
         
         // Create a pool of fixed number of threads for handling the client connections
         String s_numThreads = System.getenv("ICEBERG_TOOLKIT_NUM_THREADS");
