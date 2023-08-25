@@ -987,8 +987,11 @@ public class IcebergConnector extends MetastoreConnector
 
         System.out.println("Commiting transaction to the Iceberg table");
         PartitionSpec ps = iceberg_table.spec();
-        S3FileIO io = initS3FileIO();
-        
+        // S3FileIO io = initS3FileIO();
+        ResolvingFileIO io = new ResolvingFileIO();
+        io.setConf(m_catalog.getConf());
+        //TODO: Add S3 support
+
         Transaction transaction = iceberg_table.newTransaction();
         JSONArray ops = new JSONArray(transactionData);
         System.out.println("Starting Txn");
