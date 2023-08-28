@@ -115,7 +115,7 @@ public class SocketServer {
             try {
                 // Get the client request
                 readSocketMessage(channel).ifPresent(message -> {
-                    while(1) {
+                    while(true) {
                         try {
                             String[] args = StringUtils.tokenizeQuotedString(message).toArray(new String[0]);
                             // Process client request
