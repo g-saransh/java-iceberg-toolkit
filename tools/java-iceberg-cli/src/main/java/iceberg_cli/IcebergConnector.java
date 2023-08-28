@@ -35,6 +35,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.OverwriteFiles;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.RewriteFiles;
@@ -46,6 +47,7 @@ import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.io.ResolvingFileIO;
 import org.apache.iceberg.parquet.Parquet;
+import org.apache.iceberg.parquet.ParquetUtil;
 import org.apache.iceberg.hive.HiveCatalog;
 import org.apache.iceberg.data.parquet.GenericParquetReaders;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
@@ -694,22 +696,22 @@ public class IcebergConnector extends MetastoreConnector
         PartitionSpec ps = iceberg_table.spec();
         OutputFile outputFile = io.newOutputFile(filePath);
 
-        if(fileFormatStr == null) {
-            // if file format is not provided, we'll try to infer from the file extension (if any)
-            String fileLocation = outputFile.location();
-            if(fileLocation.contains("."))
-                fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
-            else
-                fileFormatStr = "";
-        }
+        // if(fileFormatStr == null) {
+        //     // if file format is not provided, we'll try to infer from the file extension (if any)
+        //     String fileLocation = outputFile.location();
+        //     if(fileLocation.contains("."))
+        //         fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
+        //     else
+        //         fileFormatStr = "";
+        // }
         
-        FileFormat fileFormat = null;
-        if(fileFormatStr.isEmpty())
-            throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
-        else if(fileFormatStr.toLowerCase().equals("parquet"))
-            fileFormat = FileFormat.PARQUET;
-        else
-            throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
+        // FileFormat fileFormat = null;
+        // if(fileFormatStr.isEmpty())
+        //     throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
+        // else if(fileFormatStr.toLowerCase().equals("parquet"))
+        //     fileFormat = FileFormat.PARQUET;
+        // else
+        //     throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
         
         if(fileSize == null) {
             try {
@@ -721,20 +723,26 @@ public class IcebergConnector extends MetastoreConnector
             }
         }
         
-        if (numRecords == null) {
-            try {
-                ParquetFileReader reader = getParquetFileReader(io, outputFile);
-                numRecords = reader.getRecordCount();
-            } catch (Exception e) {
-                throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
-            }
-        }
+        // if (numRecords == null) {
+        //     try {
+        //         ParquetFileReader reader = getParquetFileReader(io, outputFile);
+        //         numRecords = reader.getRecordCount();
+        //     } catch (Exception e) {
+        //         throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
+        //     }
+        // }
+
+        // DataFile data = DataFiles.builder(ps)
+        //         .withPath(outputFile.location())
+        //         .withFormat(fileFormat)
+        //         .withFileSizeInBytes(fileSize)
+        //         .withRecordCount(numRecords)
+        //         .build();
 
         DataFile data = DataFiles.builder(ps)
                 .withPath(outputFile.location())
-                .withFormat(fileFormat)
                 .withFileSizeInBytes(fileSize)
-                .withRecordCount(numRecords)
+                .withMetrics(ParquetUtil.fileMetrics(outputFile.toInputFile(), MetricsConfig.getDefault()))
                 .build();
 
         return data;
@@ -744,22 +752,22 @@ public class IcebergConnector extends MetastoreConnector
         PartitionSpec ps = iceberg_table.spec();
         OutputFile outputFile = io.newOutputFile(filePath);
 
-        if(fileFormatStr == null) {
-            // if file format is not provided, we'll try to infer from the file extension (if any)
-            String fileLocation = outputFile.location();
-            if(fileLocation.contains("."))
-                fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
-            else
-                fileFormatStr = "";
-        }
+        // if(fileFormatStr == null) {
+        //     // if file format is not provided, we'll try to infer from the file extension (if any)
+        //     String fileLocation = outputFile.location();
+        //     if(fileLocation.contains("."))
+        //         fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
+        //     else
+        //         fileFormatStr = "";
+        // }
         
-        FileFormat fileFormat = null;
-        if(fileFormatStr.isEmpty())
-            throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
-        else if(fileFormatStr.toLowerCase().equals("parquet"))
-            fileFormat = FileFormat.PARQUET;
-        else
-            throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
+        // FileFormat fileFormat = null;
+        // if(fileFormatStr.isEmpty())
+        //     throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
+        // else if(fileFormatStr.toLowerCase().equals("parquet"))
+        //     fileFormat = FileFormat.PARQUET;
+        // else
+        //     throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
         
         if(fileSize == null) {
             try {
@@ -778,13 +786,13 @@ public class IcebergConnector extends MetastoreConnector
             throw new Exception("Unable to get file reader of the file to be committed: " + outputFile.location());
         }
         
-        if (numRecords == null) {
-            try {
-                numRecords = reader.getRecordCount();
-            } catch (Exception e) {
-                throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
-            }
-        }
+        // if (numRecords == null) {
+        //     try {
+        //         numRecords = reader.getRecordCount();
+        //     } catch (Exception e) {
+        //         throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
+        //     }
+        // }
 
         int[] equalityFieldIds;
         try {
@@ -798,14 +806,21 @@ public class IcebergConnector extends MetastoreConnector
             throw new Exception("Unable to get metadata of the file to be committed: " + outputFile.location());
         }
 
+        // DeleteFile delete = FileMetadata.deleteFileBuilder(ps)
+        //         .ofEqualityDeletes(equalityFieldIds)
+        //         .withPath(outputFile.location())
+        //         .withFormat(fileFormat)
+        //         .withFileSizeInBytes(fileSize)
+        //         .withRecordCount(numRecords)
+        //         .build();
+        //         // .ofEqualityDeletes(equalityFieldIds)
+
         DeleteFile delete = FileMetadata.deleteFileBuilder(ps)
                 .ofEqualityDeletes(equalityFieldIds)
                 .withPath(outputFile.location())
-                .withFormat(fileFormat)
                 .withFileSizeInBytes(fileSize)
-                .withRecordCount(numRecords)
+                .withMetrics(ParquetUtil.fileMetrics(outputFile.toInputFile(), MetricsConfig.getDefault()))
                 .build();
-                // .ofEqualityDeletes(equalityFieldIds)
 
         return delete;
     }
