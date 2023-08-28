@@ -115,18 +115,25 @@ public class SocketServer {
             try {
                 // Get the client request
                 readSocketMessage(channel).ifPresent(message -> {
-                    try {
-                        String[] args = StringUtils.tokenizeQuotedString(message).toArray(new String[0]);
-                        // Process client request
-                        String response = new IcebergApplication().processRequest(args).trim();
-                        // Send back response from the IcebergApplication to the client
-                        sendMessage(channel, response, 0);
-                    } catch (Exception e) {
+                    while(1) {
                         try {
-                            // Send back error message to the Client
-                            sendMessage(channel, e.getMessage(), 1);
-                        } catch (IOException ioExp) {
-                            System.err.println(ioExp.getMessage());
+                            String[] args = StringUtils.tokenizeQuotedString(message).toArray(new String[0]);
+                            // Process client request
+                            String response = new IcebergApplication().processRequest(args).trim();
+                            // Send back response from the IcebergApplication to the client
+                            sendMessage(channel, response, 0);
+                            break;
+                        } catch (Exception e) {
+                            String retryScenario = "is not same as the current table metadata location";
+                            if (!e.getMessage().contains(retryScenario)) {
+                                try {
+                                    // Send back error message to the Client
+                                    sendMessage(channel, e.getMessage(), 1);
+                                } catch (IOException ioExp) {
+                                    System.err.println(ioExp.getMessage());
+                                }
+                                break;
+                            }
                         }
                     }
                     return;
