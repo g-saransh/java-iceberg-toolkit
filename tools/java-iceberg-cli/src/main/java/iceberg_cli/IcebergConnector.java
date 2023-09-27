@@ -1031,6 +1031,11 @@ public class IcebergConnector extends MetastoreConnector
                             delete = opDelete(delete, io, op_data.getJSONArray("files_to_del"));
                             delete.commit();
                             break;
+                        case "fastappend":
+                            AppendFiles fastAppend = transaction.newFastAppend();
+                            fastAppend = opAppend(fastAppend, io, op_data.getJSONArray("files_to_add"));
+                            fastAppend.commit();
+                            break;
                         case "overwrite":
                             OverwriteFiles overwrite = transaction.newOverwrite();
                             overwrite = opOverwrite(overwrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
