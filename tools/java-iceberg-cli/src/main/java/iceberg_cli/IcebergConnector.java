@@ -1038,9 +1038,12 @@ public class IcebergConnector extends MetastoreConnector
                         rewrite.commit();
                         break;
                     case "rowdelta":
+                        System.out.println("In case: rowdelta");
                         RowDelta rowDelta = transaction.newRowDelta();
                         rowDelta = opRowDelta(rowDelta, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
+                        System.out.println("Done creating rowdelta object");
                         rowDelta.commit();
+                        System.out.println("Committed rowdelta object");
                         break;
                     default:
                         throw new Exception("Invalid Operation: " + op);
