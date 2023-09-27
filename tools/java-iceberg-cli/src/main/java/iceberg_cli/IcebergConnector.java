@@ -996,64 +996,72 @@ public class IcebergConnector extends MetastoreConnector
         return rowDelta;
     }
 
+    public void upgradeTableVersion() throws Exception {
+        String schema = "{\"set_property\":[{\"key\":\"format-version\",\"value\":\"2\"}]}";
+        alterTable(schema);
+    }
+
     public boolean tableTransaction(String transactionData) throws Exception {
         if (iceberg_table == null)
             loadTable();
 
-        System.out.println("Commiting transaction to the Iceberg table");
         PartitionSpec ps = iceberg_table.spec();
         // S3FileIO io = initS3FileIO();
         ResolvingFileIO io = new ResolvingFileIO();
         io.setConf(m_catalog.getConf());
         //TODO: Add S3 support
-
-        Transaction transaction = iceberg_table.newTransaction();
-        JSONArray ops = new JSONArray(transactionData);
+       
         System.out.println("Starting Txn");
+        while (true) {
+            Transaction transaction = iceberg_table.newTransaction();
+            JSONArray ops = new JSONArray(transactionData);
 
-        for (int index = 0; index < ops.length(); ++index) {
-            JSONObject op_data = ops.getJSONObject(index);
-            String op = op_data.getString("op");
-            
             try {
-                switch(op.toLowerCase()) {
-                    case "append":
-                        AppendFiles append = transaction.newAppend();
-                        append = opAppend(append, io, op_data.getJSONArray("files_to_add"));
-                        append.commit();
-                        break;
-                    case "delete":
-                        DeleteFiles delete = transaction.newDelete();
-                        delete = opDelete(delete, io, op_data.getJSONArray("files_to_del"));
-                        delete.commit();
-                        break;
-                    case "overwrite":
-                        OverwriteFiles overwrite = transaction.newOverwrite();
-                        overwrite = opOverwrite(overwrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
-                        overwrite.commit();
-                        break;
-                    case "rewrite":
-                        RewriteFiles rewrite = transaction.newRewrite();
-                        rewrite = opRewrite(rewrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
-                        rewrite.commit();
-                        break;
-                    case "rowdelta":
-                        System.out.println("In case: rowdelta");
-                        RowDelta rowDelta = transaction.newRowDelta();
-                        rowDelta = opRowDelta(rowDelta, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
-                        System.out.println("Done creating rowdelta object");
-                        rowDelta.commit();
-                        System.out.println("Committed rowdelta object");
-                        break;
-                    default:
-                        throw new Exception("Invalid Operation: " + op);
+                for (int index = 0; index < ops.length(); ++index) {
+                    JSONObject op_data = ops.getJSONObject(index);
+                    String op = op_data.getString("op");
+                    switch(op.toLowerCase()) {
+                        case "append":
+                            AppendFiles append = transaction.newAppend();
+                            append = opAppend(append, io, op_data.getJSONArray("files_to_add"));
+                            append.commit();
+                            break;
+                        case "delete":
+                            DeleteFiles delete = transaction.newDelete();
+                            delete = opDelete(delete, io, op_data.getJSONArray("files_to_del"));
+                            delete.commit();
+                            break;
+                        case "overwrite":
+                            OverwriteFiles overwrite = transaction.newOverwrite();
+                            overwrite = opOverwrite(overwrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
+                            overwrite.commit();
+                            break;
+                        case "rewrite":
+                            RewriteFiles rewrite = transaction.newRewrite();
+                            rewrite = opRewrite(rewrite, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
+                            rewrite.commit();
+                            break;
+                        case "rowdelta":
+                            RowDelta rowDelta = transaction.newRowDelta();
+                            rowDelta = opRowDelta(rowDelta, io, op_data.getJSONArray("files_to_del"), op_data.getJSONArray("files_to_add"));
+                            rowDelta.commit();
+                            break;
+                        default:
+                            throw new Exception("Invalid Operation: " + op);
+                    }
                 }
+                transaction.commitTransaction();
+                break;
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                String v1Detected = "Cannot write delete files in a v1 table";
+                if (e.getMessage().contains(v1Detected)) {
+                    System.out.println(v1Detected + ". Upgrading table to v2.");
+                    upgradeTableVersion();
+                } else {
+                    throw new RuntimeException(e);
+                }
             }
         }
-
-        transaction.commitTransaction();
         io.close();
         System.out.println("Txn Complete!");
         
