@@ -15,6 +15,7 @@ java-iceberg-toolkit provides APIs to perform operations on Iceberg tables and H
     5. [Details](/docs/sample_api_usage.md#details)
     6. [Table Information](/docs/sample_api_usage.md#table-information-1)
     7. [Drop](/docs/sample_api_usage.md#drop)
+    8. [Truncate] (/docs/sample_api_usage.md#truncate)
 
 ## Hive Table Operations
 
@@ -223,4 +224,13 @@ import iceberg.IcebergConnector;
 
 IcebergConnector connector = new IcebergConnector(uri, warehouse, namespace, table);
 Map<Integer, List<Map<String, String>>> planFiles = connector.getPlanFiles();
+```
+
+### Truncate
+```
+import iceberg.IcebergConnector;
+
+IcebergConnector connector = new IcebergConnector(uri, warehouse, namespace, table);
+boolean overwrite = false;
+connector.truncate(overwrite);
 ```
