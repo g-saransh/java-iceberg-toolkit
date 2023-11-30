@@ -735,7 +735,7 @@ public class IcebergConnector extends MetastoreConnector
         Map<Integer, ByteBuffer> upperBounds = Maps.newHashMap();
         Schema schema = iceberg_table.schema();
         List<Types.NestedField> columns = schema.columns();
-        System.out.println("---Metrics---");
+
         for (int index = 0; index < colMetrics.length(); ++index) {
             JSONObject metric = colMetrics.getJSONObject(index);
             String colName = metric.getString("name"); // Use later to verify
@@ -746,23 +746,13 @@ public class IcebergConnector extends MetastoreConnector
             String lowerBound = metric.getString("lower_bound");
             String upperBound = metric.getString("upper_bound");
             String encoding = metric.optString("encoding");
+
+            // Type Parsing
             String colParquetType = metric.getString("parquet_type");
-            String colLogicalType = metric.getString("logical_type");
             String colConvertedType = metric.optString("converted_type", null);
-            // Type colIcebergType =
-            // Types.fromPrimitiveString(metric.getString("iceberg_type"));
             int colParquetTypeLength = metric.optInt("parquet_type_length");
             int colTypePrecision = metric.optInt("type_precision");
             int colTypeScale = metric.optInt("type_scale");
-            // double lBDouble = 0;
-            // double uBDouble = 0;
-
-            // org.apache.parquet.schema.Type parquetType =
-            // org.apache.parquet.schema.Type("tmpType",
-            // Repetition.OPTIONAL,
-            // LogicalTypeAnnotation.fromOriginalType(OriginalType.valueOf(colConvertedType),
-            // new DecimalMetadata(colTypePrecision, colTypeScale)));
-            // Types.optional(PrimitiveTypeName.BINARY).as(LogicalTypeAnnotation.stringType()).named("tmpType");
 
             PrimitiveType.PrimitiveTypeName parquetPrimitiveTypeName = PrimitiveType.PrimitiveTypeName
                     .valueOf(colParquetType);
@@ -774,73 +764,22 @@ public class IcebergConnector extends MetastoreConnector
                     new DecimalMetadata(colTypePrecision, colTypeScale),
                     null);
 
-            // PrimitiveType parquetPrimitiveType = parquetType.asPrimitiveType();
             Statistics.Builder statsBuilder = Statistics.getBuilderForReading(parquetPrimitiveType);
             switch (encoding.toLowerCase()) {
                 case "base64":
                     statsBuilder = statsBuilder.withMin(Base64.getDecoder().decode(lowerBound))
                             .withMax(Base64.getDecoder().decode(upperBound));
-                    // try {
-                    // lBDouble = Double
-                    // .longBitsToDouble(BytesUtils.bytesToLong(Base64.getDecoder().decode(lowerBound)));
-                    // uBDouble = Double
-                    // .longBitsToDouble(BytesUtils.bytesToLong(Base64.getDecoder().decode(upperBound)));
-                    // } catch (Exception e) {
-                    // System.out.println("error converting to double");
-                    // }
-                    // lowerBound = new String(Base64.getDecoder().decode(lowerBound));
-                    // upperBound = new String(Base64.getDecoder().decode(upperBound));
-                    // break;
                 case "":
                     break;
                 default:
                     throw new Exception("Unsupported encoding: " + encoding);
             }
             Statistics<?> stats = statsBuilder.build();
-            // Literal<?> min =
-            // ParquetConversions.fromParquetPrimitive(columns.get(index).type(),
-            // parquetPrimitiveType,
-            // stats.genericGetMin());
-            // Literal<?> max =
-            // ParquetConversions.fromParquetPrimitive(columns.get(index).type(),
-            // parquetPrimitiveType,
-            // stats.genericGetMax());
             Type colIcebergType = columns.get(index).type();
-            // Literal<?> min;
-            // Literal<?> max;
-
-            System.out.println("-" + colName + "-");
-            System.out.println("Iceberg type: " + colIcebergType.toString());
-            System.out.println("Parquet type: " + parquetPrimitiveType.toString());
-            // System.out.println("Parquet original type: " +
-            // parquetPrimitiveType.getOriginalType().toString());
-            // try {
-            // min = parquetToByteBuffer(colIcebergType, parquetPrimitiveType,
-            // stats.genericGetMin());
-            // max = parquetToByteBuffer(colIcebergType, parquetPrimitiveType,
-            // stats.genericGetMax());
-            // } catch (Exception e) {
-            // e.printStackTrace();
-            // throw new Exception("Error converting Parquet type to Iceberg type for
-            // column: " + colName);
-            // }
-
-            // System.out.println("size: " + colSize);
-            // System.out.println("values: " + valueCount);
-            // System.out.println("null_values: " + nullValueCount);
-            // System.out.println("lower_bound: " + lowerBound);
-            // System.out.println("upper_bound: " + upperBound);
-            // try {
-            // System.out.println("lBDouble: " + lBDouble);
-            // System.out.println("uBDouble: " + uBDouble);
-            // } catch (Exception e) {
-            // System.out.println("Error printing double");
-            // }
             columnSizes.put(index + 1, colSize);
             valueCounts.put(index + 1, valueCount);
             nullValueCounts.put(index + 1, nullValueCount);
-            // System.out.println("Min value: " + min.value());
-            // System.out.println("Max value: " + max.value());
+
             try {
                 ByteBuffer min = parquetToByteBuffer(colIcebergType, parquetPrimitiveType, stats.genericGetMin());
                 ByteBuffer max = parquetToByteBuffer(colIcebergType, parquetPrimitiveType, stats.genericGetMax());
