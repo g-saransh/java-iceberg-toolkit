@@ -13,6 +13,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
 
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
@@ -23,6 +24,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.security.UserGroupInformation;
 import com.google.common.collect.ImmutableList;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.iceberg.AppendFiles;
@@ -35,11 +37,13 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.Metrics;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.OverwriteFiles;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.RewriteFiles;
 import org.apache.iceberg.RowDelta;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.FileIO;
@@ -58,6 +62,7 @@ import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableScan;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.UpdateSchema;
@@ -65,23 +70,31 @@ import org.apache.iceberg.UpdateProperties;
 import org.apache.iceberg.aws.s3.S3FileIO;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.SerializableSupplier;
 import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.avro.AvroParquetReader;
+import org.apache.parquet.bytes.BytesUtils;
 import org.apache.parquet.column.ParquetProperties;
+import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.hadoop.Footer;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.parquet.io.InputFile;
-import org.apache.iceberg.TableMetadata;
+import org.apache.parquet.schema.DecimalMetadata;
+import org.apache.parquet.schema.LogicalTypeAnnotation;
+import org.apache.parquet.schema.OriginalType;
+import org.apache.parquet.schema.PrimitiveType;
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
+import org.apache.parquet.schema.Type.Repetition;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.google.common.collect.Maps;
 import com.google.common.io.Files;
 
 import iceberg_cli.catalog.CustomCatalog;
@@ -692,27 +705,180 @@ public class IcebergConnector extends MetastoreConnector
         return reader;
     }
 
-    DataFile getDataFile(FileIO io, String filePath, String fileFormatStr, Long fileSize, Long numRecords) throws Exception {
+    static <T> Literal<T> parquetToIceberg(Type type, PrimitiveType parquetType, Object value) throws Exception {
+        Class<?> pifClass = Class.forName("org.apache.iceberg.parquet.ParquetConversions");
+        Constructor<?> pifCstr = pifClass.getDeclaredConstructor();
+        pifCstr.setAccessible(true);
+        Object pifInst = pifCstr.newInstance();
+        Method pifMthd = pifClass.getDeclaredMethod("fromParquetPrimitive", Type.class, PrimitiveType.class,
+                Object.class);
+        pifMthd.setAccessible(true);
+        Object iceberg_value = pifMthd.invoke(pifInst, type, parquetType, value);
+        return (Literal<T>) iceberg_value;
+    }
+
+    ByteBuffer parquetToByteBuffer(Type type, PrimitiveType parquetType, Object value) throws Exception {
+        if (value == null) {
+            return null;
+        }
+
+        Literal<?> iceberg_literal = parquetToIceberg(type, parquetType, value);
+        return Conversions.toByteBuffer(type, iceberg_literal.value());
+    }
+
+    Metrics parseColMetrics(Long numRecords, JSONArray colMetrics) throws Exception {
+        Map<Integer, Long> columnSizes = Maps.newHashMap();
+        Map<Integer, Long> valueCounts = Maps.newHashMap();
+        Map<Integer, Long> nullValueCounts = Maps.newHashMap();
+        Map<Integer, Long> nanValueCounts = Maps.newHashMap();
+        Map<Integer, ByteBuffer> lowerBounds = Maps.newHashMap();
+        Map<Integer, ByteBuffer> upperBounds = Maps.newHashMap();
+        Schema schema = iceberg_table.schema();
+        List<Types.NestedField> columns = schema.columns();
+        System.out.println("---Metrics---");
+        for (int index = 0; index < colMetrics.length(); ++index) {
+            JSONObject metric = colMetrics.getJSONObject(index);
+            String colName = metric.getString("name"); // Use later to verify
+            // column names to support missing columns
+            Long colSize = getJsonLongOrDefault(metric, "column_size", null);
+            Long valueCount = getJsonLongOrDefault(metric, "value_count", null);
+            Long nullValueCount = getJsonLongOrDefault(metric, "null_value_count", null);
+            String lowerBound = metric.getString("lower_bound");
+            String upperBound = metric.getString("upper_bound");
+            String encoding = metric.optString("encoding");
+            String colParquetType = metric.getString("parquet_type");
+            String colLogicalType = metric.getString("logical_type");
+            String colConvertedType = metric.optString("converted_type", null);
+            // Type colIcebergType =
+            // Types.fromPrimitiveString(metric.getString("iceberg_type"));
+            int colParquetTypeLength = metric.optInt("parquet_type_length");
+            int colTypePrecision = metric.optInt("type_precision");
+            int colTypeScale = metric.optInt("type_scale");
+            // double lBDouble = 0;
+            // double uBDouble = 0;
+
+            // org.apache.parquet.schema.Type parquetType =
+            // org.apache.parquet.schema.Type("tmpType",
+            // Repetition.OPTIONAL,
+            // LogicalTypeAnnotation.fromOriginalType(OriginalType.valueOf(colConvertedType),
+            // new DecimalMetadata(colTypePrecision, colTypeScale)));
+            // Types.optional(PrimitiveTypeName.BINARY).as(LogicalTypeAnnotation.stringType()).named("tmpType");
+
+            PrimitiveType.PrimitiveTypeName parquetPrimitiveTypeName = PrimitiveType.PrimitiveTypeName
+                    .valueOf(colParquetType);
+            PrimitiveType parquetPrimitiveType = new PrimitiveType(Repetition.OPTIONAL,
+                    parquetPrimitiveTypeName,
+                    colParquetTypeLength,
+                    "tmpType",
+                    (colConvertedType != null) ? OriginalType.valueOf(colConvertedType) : null,
+                    new DecimalMetadata(colTypePrecision, colTypeScale),
+                    null);
+
+            // PrimitiveType parquetPrimitiveType = parquetType.asPrimitiveType();
+            Statistics.Builder statsBuilder = Statistics.getBuilderForReading(parquetPrimitiveType);
+            switch (encoding.toLowerCase()) {
+                case "base64":
+                    statsBuilder = statsBuilder.withMin(Base64.getDecoder().decode(lowerBound))
+                            .withMax(Base64.getDecoder().decode(upperBound));
+                    // try {
+                    // lBDouble = Double
+                    // .longBitsToDouble(BytesUtils.bytesToLong(Base64.getDecoder().decode(lowerBound)));
+                    // uBDouble = Double
+                    // .longBitsToDouble(BytesUtils.bytesToLong(Base64.getDecoder().decode(upperBound)));
+                    // } catch (Exception e) {
+                    // System.out.println("error converting to double");
+                    // }
+                    // lowerBound = new String(Base64.getDecoder().decode(lowerBound));
+                    // upperBound = new String(Base64.getDecoder().decode(upperBound));
+                    // break;
+                case "":
+                    break;
+                default:
+                    throw new Exception("Unsupported encoding: " + encoding);
+            }
+            Statistics<?> stats = statsBuilder.build();
+            // Literal<?> min =
+            // ParquetConversions.fromParquetPrimitive(columns.get(index).type(),
+            // parquetPrimitiveType,
+            // stats.genericGetMin());
+            // Literal<?> max =
+            // ParquetConversions.fromParquetPrimitive(columns.get(index).type(),
+            // parquetPrimitiveType,
+            // stats.genericGetMax());
+            Type colIcebergType = columns.get(index).type();
+            // Literal<?> min;
+            // Literal<?> max;
+
+            System.out.println("-" + colName + "-");
+            System.out.println("Iceberg type: " + colIcebergType.toString());
+            System.out.println("Parquet type: " + parquetPrimitiveType.toString());
+            // System.out.println("Parquet original type: " +
+            // parquetPrimitiveType.getOriginalType().toString());
+            // try {
+            // min = parquetToByteBuffer(colIcebergType, parquetPrimitiveType,
+            // stats.genericGetMin());
+            // max = parquetToByteBuffer(colIcebergType, parquetPrimitiveType,
+            // stats.genericGetMax());
+            // } catch (Exception e) {
+            // e.printStackTrace();
+            // throw new Exception("Error converting Parquet type to Iceberg type for
+            // column: " + colName);
+            // }
+
+            // System.out.println("size: " + colSize);
+            // System.out.println("values: " + valueCount);
+            // System.out.println("null_values: " + nullValueCount);
+            // System.out.println("lower_bound: " + lowerBound);
+            // System.out.println("upper_bound: " + upperBound);
+            // try {
+            // System.out.println("lBDouble: " + lBDouble);
+            // System.out.println("uBDouble: " + uBDouble);
+            // } catch (Exception e) {
+            // System.out.println("Error printing double");
+            // }
+            columnSizes.put(index + 1, colSize);
+            valueCounts.put(index + 1, valueCount);
+            nullValueCounts.put(index + 1, nullValueCount);
+            // System.out.println("Min value: " + min.value());
+            // System.out.println("Max value: " + max.value());
+            try {
+                ByteBuffer min = parquetToByteBuffer(colIcebergType, parquetPrimitiveType, stats.genericGetMin());
+                ByteBuffer max = parquetToByteBuffer(colIcebergType, parquetPrimitiveType, stats.genericGetMax());
+                if (min != null) {
+                    lowerBounds.put(index + 1, min);
+                }
+                if (max != null) {
+                    upperBounds.put(index + 1, max);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new Exception("Error converting Parquet type to ByteBuffer for column: " + colName);
+            }
+        }
+
+        return new Metrics(numRecords, columnSizes, valueCounts, nullValueCounts, nanValueCounts, lowerBounds,
+                upperBounds);
+    }
+
+    DataFile getDataFile(FileIO io, String filePath, Long fileSize, Long numRecords, JSONArray colMetrics)
+            throws Exception {
         PartitionSpec ps = iceberg_table.spec();
         OutputFile outputFile = io.newOutputFile(filePath);
 
-        // if(fileFormatStr == null) {
-        //     // if file format is not provided, we'll try to infer from the file extension (if any)
-        //     String fileLocation = outputFile.location();
-        //     if(fileLocation.contains("."))
-        //         fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
-        //     else
-        //         fileFormatStr = "";
-        // }
-        
-        // FileFormat fileFormat = null;
-        // if(fileFormatStr.isEmpty())
-        //     throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
-        // else if(fileFormatStr.toLowerCase().equals("parquet"))
-        //     fileFormat = FileFormat.PARQUET;
-        // else
-        //     throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
-        
+        DataFile data = DataFiles.builder(ps)
+                .withPath(outputFile.location())
+                .withFileSizeInBytes(fileSize)
+                .withMetrics(parseColMetrics(numRecords, colMetrics))
+                .build();
+
+        return data;
+    }
+
+    DataFile getDataFile(FileIO io, String filePath, String fileFormatStr, Long fileSize, Long numRecords)
+            throws Exception {
+        PartitionSpec ps = iceberg_table.spec();
+        OutputFile outputFile = io.newOutputFile(filePath);
+
         if(fileSize == null) {
             try {
                 FileSystem fs = FileSystem.get(new URI(outputFile.location()), m_catalog.getConf());
@@ -722,22 +888,6 @@ public class IcebergConnector extends MetastoreConnector
                 throw new Exception("Unable to infer the filesize of the file to be committed: " + outputFile.location());
             }
         }
-        
-        // if (numRecords == null) {
-        //     try {
-        //         ParquetFileReader reader = getParquetFileReader(io, outputFile);
-        //         numRecords = reader.getRecordCount();
-        //     } catch (Exception e) {
-        //         throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
-        //     }
-        // }
-
-        // DataFile data = DataFiles.builder(ps)
-        //         .withPath(outputFile.location())
-        //         .withFormat(fileFormat)
-        //         .withFileSizeInBytes(fileSize)
-        //         .withRecordCount(numRecords)
-        //         .build();
 
         DataFile data = DataFiles.builder(ps)
                 .withPath(outputFile.location())
@@ -748,27 +898,39 @@ public class IcebergConnector extends MetastoreConnector
         return data;
     }
 
-    DeleteFile getDeleteFile(FileIO io, String filePath, String fileFormatStr, Long fileSize, Long numRecords) throws Exception {
+    DeleteFile getDeleteFile(FileIO io, String filePath, Long fileSize, Long numRecords, String deleteType,
+            String deleteIds, JSONArray colMetrics)
+            throws Exception {
         PartitionSpec ps = iceberg_table.spec();
         OutputFile outputFile = io.newOutputFile(filePath);
 
-        // if(fileFormatStr == null) {
-        //     // if file format is not provided, we'll try to infer from the file extension (if any)
-        //     String fileLocation = outputFile.location();
-        //     if(fileLocation.contains("."))
-        //         fileFormatStr = fileLocation.substring(fileLocation.lastIndexOf('.') + 1, fileLocation.length());
-        //     else
-        //         fileFormatStr = "";
-        // }
-        
-        // FileFormat fileFormat = null;
-        // if(fileFormatStr.isEmpty())
-        //     throw new Exception("Unable to infer the file format of the file to be committed: " + outputFile.location());
-        // else if(fileFormatStr.toLowerCase().equals("parquet"))
-        //     fileFormat = FileFormat.PARQUET;
-        // else
-        //     throw new Exception("Unsupported file format " + fileFormatStr + " cannot be committed: " + outputFile.location());
-        
+        if (!(deleteType.toLowerCase().equals("equality"))) {
+            throw new Exception("Empty or unsupported delete type: " + deleteType);
+        }
+        if (deleteIds.equals("")) {
+            throw new Exception("Empty delete ids provided");
+        }
+
+        String[] fieldIdsArray = deleteIds.split(", ");
+        int[] equalityFieldIds = new int[fieldIdsArray.length];
+        for (int i = 0; i < fieldIdsArray.length; i++) {
+            equalityFieldIds[i] = Integer.parseInt(fieldIdsArray[i]);
+        }
+        DeleteFile delete = FileMetadata.deleteFileBuilder(ps)
+                .ofEqualityDeletes(equalityFieldIds)
+                .withPath(outputFile.location())
+                .withFileSizeInBytes(fileSize)
+                .withMetrics(parseColMetrics(numRecords, colMetrics))
+                .build();
+
+        return delete;
+    }
+
+    DeleteFile getDeleteFile(FileIO io, String filePath, String fileFormatStr, Long fileSize, Long numRecords)
+            throws Exception {
+        PartitionSpec ps = iceberg_table.spec();
+        OutputFile outputFile = io.newOutputFile(filePath);
+
         if(fileSize == null) {
             try {
                 FileSystem fs = FileSystem.get(new URI(outputFile.location()), m_catalog.getConf());
@@ -785,14 +947,6 @@ public class IcebergConnector extends MetastoreConnector
         } catch (Exception e) {
             throw new Exception("Unable to get file reader of the file to be committed: " + outputFile.location());
         }
-        
-        // if (numRecords == null) {
-        //     try {
-        //         numRecords = reader.getRecordCount();
-        //     } catch (Exception e) {
-        //         throw new Exception("Unable to infer the number of records of the file to be committed: " + outputFile.location());
-        //     }
-        // }
 
         int[] equalityFieldIds;
         try {
@@ -805,15 +959,6 @@ public class IcebergConnector extends MetastoreConnector
         } catch (Exception e) {
             throw new Exception("Unable to get metadata of the file to be committed: " + outputFile.location());
         }
-
-        // DeleteFile delete = FileMetadata.deleteFileBuilder(ps)
-        //         .ofEqualityDeletes(equalityFieldIds)
-        //         .withPath(outputFile.location())
-        //         .withFormat(fileFormat)
-        //         .withFileSizeInBytes(fileSize)
-        //         .withRecordCount(numRecords)
-        //         .build();
-        //         // .ofEqualityDeletes(equalityFieldIds)
 
         DeleteFile delete = FileMetadata.deleteFileBuilder(ps)
                 .ofEqualityDeletes(equalityFieldIds)
@@ -839,12 +984,21 @@ public class IcebergConnector extends MetastoreConnector
             Long numRecords = getJsonLongOrDefault(file, "record_count", null);
             
             try {
-                dataFiles.add(getDataFile(
-                    io,
-                    filePath,
-                    fileFormatStr,
-                    fileSize,
-                    numRecords));
+                if (file.has("col_metrics")) {
+                    dataFiles.add(getDataFile(
+                            io,
+                            filePath,
+                            fileSize,
+                            numRecords,
+                            file.getJSONArray("col_metrics")));
+                } else {
+                    dataFiles.add(getDataFile(
+                            io,
+                            filePath,
+                            fileFormatStr,
+                            fileSize,
+                            numRecords));
+                }
             } catch (Exception e) {
                 throw new RuntimeException(e);
             } 
@@ -864,17 +1018,30 @@ public class IcebergConnector extends MetastoreConnector
             String fileFormatStr = getJsonStringOrDefault(file, "file_format", null);
             Long fileSize = getJsonLongOrDefault(file, "file_size_in_bytes", null);
             Long numRecords = getJsonLongOrDefault(file, "record_count", null);
+            String deleteType = file.optString("delete_type");
+            String deleteIds = file.optString("delete_field_ids");
             
             try {
-                deleteFiles.add(getDeleteFile(
-                    io,
-                    filePath,
-                    fileFormatStr,
-                    fileSize,
-                    numRecords));
+                if (file.has("col_metrics")) {
+                    deleteFiles.add(getDeleteFile(
+                            io,
+                            filePath,
+                            fileSize,
+                            numRecords,
+                            deleteType,
+                            deleteIds,
+                            file.getJSONArray("col_metrics")));
+                } else {
+                    deleteFiles.add(getDeleteFile(
+                            io,
+                            filePath,
+                            fileFormatStr,
+                            fileSize,
+                            numRecords));
+                }
             } catch (Exception e) {
                 throw new RuntimeException(e);
-            } 
+            }
         }
         return deleteFiles;
     }
@@ -1006,10 +1173,16 @@ public class IcebergConnector extends MetastoreConnector
             loadTable();
 
         PartitionSpec ps = iceberg_table.spec();
-        // S3FileIO io = initS3FileIO();
-        ResolvingFileIO io = new ResolvingFileIO();
-        io.setConf(m_catalog.getConf());
-        //TODO: Add S3 support
+
+        FileIO io;
+        if (transactionData.contains("s3a://")) {
+            io = initS3FileIO();
+        } else {
+            ResolvingFileIO ioR = new ResolvingFileIO();
+            ioR.setConf(m_catalog.getConf());
+            io = ioR;
+            ioR.close();
+        }
        
         System.out.println("Starting Txn");
         while (true) {
