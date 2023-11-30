@@ -178,6 +178,10 @@ public class IcebergApplication {
                throw new ParseException("Missing required argument: schema");
             output = "Operation successful? " + connector.alterTable(schemaJsonString);
             break;
+        case "truncate":
+            boolean overwrite = parser.overwrite();
+            output = "Operation successful? " + connector.truncateTable(overwrite);
+            break;
         default:
             System.err.println("Error: Invalid action");
             break;
@@ -211,6 +215,7 @@ public class IcebergApplication {
             case "tasks":
             case "type":
             case "alter":
+            case "truncate":
                 validateNamespace(namespace);
                 validateTable(tableName);
                 break;

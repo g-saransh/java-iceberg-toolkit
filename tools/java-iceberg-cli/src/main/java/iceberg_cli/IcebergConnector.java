@@ -1185,6 +1185,34 @@ public class IcebergConnector extends MetastoreConnector
         return true;
     }
 
+    public boolean truncateTable(boolean overwrite) throws Exception {
+        if (iceberg_table == null)
+            loadTable();
+
+        PartitionSpec ps = iceberg_table.spec();
+        System.out.println("Starting truncate operation!");
+
+        if (overwrite) {
+            Schema schema = getTableSchema();
+            System.out.println("Overwriting existing table!");
+            return createTable(schema, ps, overwrite);
+        }
+
+        Iterable<FileScanTask> scanTasks = m_scan.planFiles();
+        Transaction transaction = iceberg_table.newTransaction();
+        DeleteFiles delete = transaction.newDelete();
+
+        for (FileScanTask scanTask : scanTasks) {
+            DataFile file = scanTask.file();
+            delete.deleteFile(file);
+        }
+
+        delete.commit();
+        transaction.commitTransaction();
+
+        System.out.println("Truncate operation completed!");
+        return true;
+    }
 
     public Schema getTableSchema() {
         if (iceberg_table == null)
