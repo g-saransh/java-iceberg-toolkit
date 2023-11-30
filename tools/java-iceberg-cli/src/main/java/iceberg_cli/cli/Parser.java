@@ -162,7 +162,13 @@ public class Parser {
         transaction.addArgument("identifier", "Table identifier", true);
         transaction.addArgument("transaction-data", "Operation(s) with the corresponding data and delete file(s)", true);
         m_commands.put("transaction", transaction);
-        
+
+        Command truncate = new Command("truncate", "Truncate a table");
+        create.addOption("--help", "Show this help message and exit");
+        create.addOption("--force", "Truncate by recreating an empty table. Does not maintain metadata history.");
+        create.addArgument("identifier", "Table or namespace identifier", true);
+        m_commands.put("truncate", truncate);
+
         Command type = new Command("type", "Fetch table type");
         type.addOption("--help", "Show this help message and exit");
         type.addArgument("identifier", "Table identifier", true);
