@@ -166,7 +166,7 @@ public class Parser {
         Command truncate = new Command("truncate", "Truncate a table");
         create.addOption("--help", "Show this help message and exit");
         create.addOption("--force", "Truncate by recreating an empty table. Does not maintain metadata history.");
-        create.addArgument("identifier", "Table or namespace identifier", true);
+        create.addArgument("identifier", "Table identifier", true);
         m_commands.put("truncate", truncate);
 
         Command type = new Command("type", "Fetch table type");
