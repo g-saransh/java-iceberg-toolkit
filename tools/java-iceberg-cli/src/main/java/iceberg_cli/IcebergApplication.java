@@ -187,6 +187,11 @@ public class IcebergApplication {
             boolean overwrite = parser.overwrite();
             output = "Operation successful? " + connector.truncateTable(overwrite);
             break;
+        case "search":
+            boolean all = parser.fetchAll();
+            String subTag = parser.getPositionalArg("sub-tag");
+            output = connector.getTag(subTag, all);
+            break;
         default:
             System.err.println("Error: Invalid action");
             break;
@@ -221,6 +226,7 @@ public class IcebergApplication {
             case "type":
             case "alter":
             case "truncate":
+            case "search":
                 validateNamespace(namespace);
                 validateTable(tableName);
                 break;

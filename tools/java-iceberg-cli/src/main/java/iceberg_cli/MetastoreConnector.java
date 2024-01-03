@@ -83,6 +83,8 @@ public abstract class MetastoreConnector
 
     public abstract boolean addTag(String tag) throws Exception;
 
+    public abstract String getTag(String subTag, boolean all) throws Exception;
+
     public abstract Schema getTableSchema();
     
     public abstract List<Namespace> listNamespaces() throws Exception;

@@ -136,6 +136,13 @@ public class Parser {
         rewrite.addArgument("data-files", "Data file(s) to delete and data file(s) to add", true);
         m_commands.put("rewrite", rewrite);
 
+        Command search = new Command("search", "Search table for the latest or all tag(s) containing the input sub tag");
+        search.addOption("--help", "Show this help message and exit");
+        search.addOption("--all", "Show all matching tags");
+        search.addArgument("identifier", "Table identifier", true);
+        search.addArgument("sub-tag", "Sub tag to search for", true);
+        m_commands.put("search", search);
+
         Command schema = new Command("schema", "Fetch schema of a table");
         schema.addOption("--help", "Show this help message and exit");
         schema.addArgument("identifier", "Table identifier", true);

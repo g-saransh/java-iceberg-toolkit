@@ -62,6 +62,7 @@ import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableScan;
@@ -1223,6 +1224,17 @@ public class IcebergConnector extends MetastoreConnector
         
         System.out.println("Tag added!");
         return true;
+    }
+
+    public String getTag(String subTag, boolean all) throws Exception {
+        Set<String> tags = iceberg_table.refs().keySet();
+        tags.removeIf(key -> !key.contains(subTag));
+        String output;
+        if (all) {
+            output = String.join(",", tags);
+        } else 
+            output = Collections.max(tags);
+        return output;
     }
 
     public Schema getTableSchema() {
