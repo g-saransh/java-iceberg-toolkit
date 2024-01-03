@@ -291,6 +291,12 @@ public class HiveConnector extends MetastoreConnector
     }
 
     @Override
+    public boolean addTag(String tag) throws Exception {
+        // TODO Auto-generated method stub
+        throw new Exception("Hive functionality not supported yet.");
+    }
+
+    @Override
     public Schema getTableSchema() {
         List<FieldSchema> schema;
         try {

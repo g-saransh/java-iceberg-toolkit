@@ -81,6 +81,8 @@ public abstract class MetastoreConnector
 
     public abstract boolean truncateTable(boolean overwrite) throws Exception;
 
+    public abstract boolean addTag(String tag) throws Exception;
+
     public abstract Schema getTableSchema();
     
     public abstract List<Namespace> listNamespaces() throws Exception;

@@ -161,6 +161,7 @@ public class Parser {
         transaction.addOption("--help", "Show this help message and exit");
         transaction.addArgument("identifier", "Table identifier", true);
         transaction.addArgument("transaction-data", "Operation(s) with the corresponding data and delete file(s)", true);
+        transaction.addArgument("tag", "Snapshot tag to apply to transaction");
         m_commands.put("transaction", transaction);
 
         Command truncate = new Command("truncate", "Truncate a table");

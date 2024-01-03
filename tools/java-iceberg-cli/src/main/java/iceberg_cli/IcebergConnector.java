@@ -37,6 +37,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.ManageSnapshots;
 import org.apache.iceberg.Metrics;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.OverwriteFiles;
@@ -1211,6 +1212,16 @@ public class IcebergConnector extends MetastoreConnector
         transaction.commitTransaction();
 
         System.out.println("Truncate operation completed!");
+        return true;
+    }
+
+    public boolean addTag(String tag) throws Exception {
+        Long snapshotID = getCurrentSnapshotId();
+        ManageSnapshots manage_snapshots = iceberg_table.manageSnapshots();
+        manage_snapshots.createTag(tag, snapshotID);
+        manage_snapshots.commit();
+        
+        System.out.println("Tag added!");
         return true;
     }
 

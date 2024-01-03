@@ -165,7 +165,12 @@ public class IcebergApplication {
             break;
         case "transaction":
             String transactionData = parser.getPositionalArg("transaction-data");
-            output = "Operation successful? " + connector.tableTransaction(transactionData);
+            String tag = parser.getPositionalArg("tag");
+            boolean txn_status = connector.tableTransaction(transactionData);
+            output = "Operation successful? " + txn_status;
+            if (txn_status & (tag != null))
+                connector.loadTable();
+                output = output + "; Tag successful? " + connector.addTag(tag);
             break;
         case "drop":
             if (tableName != null)
