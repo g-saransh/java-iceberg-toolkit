@@ -1227,9 +1227,14 @@ public class IcebergConnector extends MetastoreConnector
     }
 
     public String getTag(String subTag, boolean all) throws Exception {
+        if (iceberg_table == null)
+            loadTable();
+
         Set<String> tags = iceberg_table.refs().keySet();
-        tags.removeIf(key -> !key.contains(subTag));
+        if (tags.isEmpty())
+            return "null";
         
+        tags.removeIf(key -> !key.contains(subTag));
         if (tags.isEmpty())
             return "null";
 
