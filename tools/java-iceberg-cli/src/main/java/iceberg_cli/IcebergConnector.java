@@ -4,6 +4,7 @@
 
 package iceberg_cli;
 
+
 import java.util.*;
 import java.util.stream.Collectors;
 import java.io.File;
@@ -1222,7 +1223,7 @@ public class IcebergConnector extends MetastoreConnector
         manage_snapshots.createTag(tag, snapshotID);
         manage_snapshots.commit();
         
-        System.out.println("Tag added!");
+        System.out.println("Tag added: " + tag);
         return true;
     }
 
@@ -1230,14 +1231,24 @@ public class IcebergConnector extends MetastoreConnector
         if (iceberg_table == null)
             loadTable();
 
-        Set<String> tags = iceberg_table.refs().keySet();
-        if (tags.isEmpty())
+        Set<String> tags = new HashSet<String>(iceberg_table.refs().keySet());
+        if (tags.isEmpty()) {
+            System.out.println("Empty ref map!");
             return "null";
-        
-        tags.removeIf(key -> !key.contains(subTag));
-        if (tags.isEmpty())
-            return "null";
+        }
 
+        try {
+            tags.removeIf(key -> !key.startsWith(subTag));
+        } catch (Exception e) {
+            System.out.println("Exception while filtering");
+            return "null";
+        }
+
+        if (tags.isEmpty()) {
+            System.out.println("Empty filtered tags!");
+            return "null";
+        }
+        
         if (all) {
             return String.join(",", tags);
         } else 
