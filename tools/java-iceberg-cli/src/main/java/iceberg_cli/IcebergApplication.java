@@ -192,6 +192,11 @@ public class IcebergApplication {
             String subTag = parser.getPositionalArg("sub-tag");
             output = connector.getTag(subTag, all);
             break;
+        case "rollback":
+            boolean force = parser.overwrite();
+            String rollbackTag = parser.getPositionalArg("tag");
+            output = "Operation successful? " + connector.rollbackTable(rollbackTag, force);
+            break;
         default:
             System.err.println("Error: Invalid action");
             break;
@@ -227,6 +232,7 @@ public class IcebergApplication {
             case "alter":
             case "truncate":
             case "search":
+            case "rollback":
                 validateNamespace(namespace);
                 validateTable(tableName);
                 break;

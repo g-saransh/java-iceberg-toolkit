@@ -38,6 +38,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.HistoryEntry;
 import org.apache.iceberg.ManageSnapshots;
 import org.apache.iceberg.Metrics;
 import org.apache.iceberg.MetricsConfig;
@@ -110,6 +111,7 @@ import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
 
 public class IcebergConnector extends MetastoreConnector
 {
@@ -1219,9 +1221,9 @@ public class IcebergConnector extends MetastoreConnector
 
     public boolean addTag(String tag) throws Exception {
         Long snapshotID = getCurrentSnapshotId();
-        ManageSnapshots manage_snapshots = iceberg_table.manageSnapshots();
-        manage_snapshots.createTag(tag, snapshotID);
-        manage_snapshots.commit();
+        ManageSnapshots manageSnapshots = iceberg_table.manageSnapshots();
+        manageSnapshots.createTag(tag, snapshotID);
+        manageSnapshots.commit();
         
         System.out.println("Tag added: " + tag);
         return true;
@@ -1253,6 +1255,66 @@ public class IcebergConnector extends MetastoreConnector
             return String.join(",", tags);
         } else 
             return Collections.max(tags);
+    }
+
+    public boolean rollbackToSnapshot(Long snapshotId) throws Exception {
+        if (iceberg_table == null)
+            loadTable();
+
+        ManageSnapshots manageSnapshots = iceberg_table.manageSnapshots();
+        manageSnapshots.rollbackTo(snapshotId);
+        manageSnapshots.commit();
+        System.out.println("Table rolled back to snapshotId: " + snapshotId);
+        return true;
+    }
+
+    public boolean rollbackTable(String tag, boolean force) throws Exception {
+        if (iceberg_table == null)
+            loadTable();
+        
+        if (force) {
+            Snapshot snapshot = iceberg_table.snapshot(tag);
+            if (snapshot == null)
+                throw new Exception("Tag " + tag + " not present in the table");
+            
+            return rollbackToSnapshot(snapshot.snapshotId());
+        }
+        
+        Map<String, SnapshotRef> refs = iceberg_table.refs();
+        Long snapshotToRollback = refs.get(tag).snapshotId();
+        List<Long> refSnapshots;
+        List<Long> histSnapshots;
+        Long targetSnapshot;
+
+        try {
+            histSnapshots =
+                iceberg_table.history().stream()
+                    .map(HistoryEntry::snapshotId)
+                    .collect(Collectors.toList());
+
+            if (histSnapshots.isEmpty())
+                throw new Exception("The table has no history");
+
+            System.out.println("All Snapshot IDs: " + histSnapshots.toString());
+
+            if (refs.isEmpty())
+                throw new Exception("The table has no tagged snapshots");
+            
+            refSnapshots =
+                refs.values().stream()
+                    .map(SnapshotRef::snapshotId)
+                    .collect(Collectors.toList());
+            System.out.println("Tagged Snapshot IDs: " + refSnapshots.toString());
+
+            // history.removeIf(entry -> !refSnapshots.contains(entry.snapshotId()));
+            histSnapshots.removeIf(entry -> !refSnapshots.contains(entry));
+            targetSnapshot = histSnapshots.get(histSnapshots.indexOf(snapshotToRollback) - 1);
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new Exception("Exception while processing snapshots: " + e.getMessage());
+        }
+
+        return rollbackToSnapshot(targetSnapshot);
     }
 
     public Schema getTableSchema() {
