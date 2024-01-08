@@ -1333,7 +1333,7 @@ public class IcebergConnector extends MetastoreConnector
 
             System.out.println("Snapshot IDs to Tags: " + snapToTag.toString());
 
-            idx = histSnapshots.indexOf(snapshotToRollback.snapshotId());
+            idx = histSnapshots.lastIndexOf(snapshotToRollback.snapshotId());
             // preSnapshots = histSnapshots.subList(0, (idx - 1));
             postSnapshots = new ArrayList<>(histSnapshots.subList((idx + 1), histSnapshots.size()));
             System.out.println("idx: " + idx + ", histSnapshots.size(): " + histSnapshots.size());
@@ -1372,6 +1372,7 @@ public class IcebergConnector extends MetastoreConnector
             List<Long> snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
             System.out.println("Untagging Snapshot IDs: " + snapsToUntag.toString());
             snapsToUntag.stream().map(e -> ms.removeTag(snapToTag.get(e)));
+            ms.commit();
         } else {
             // Apply postSnapshots
             System.out.println("Current Snapshot IDs: " + histSnapshots.toString());
@@ -1379,18 +1380,22 @@ public class IcebergConnector extends MetastoreConnector
             System.out.println(postSnapshots.toString());
             // postSnapshots.stream().map(e -> ms.cherrypick(e)); //Cannot do this because we need to tag post commits
             // replace tags now
-            for (Long postSnapshot : postSnapshots) {
-                ms.cherrypick(postSnapshot);
+            ms.commit();
+            ManageSnapshots ms_ = iceberg_table.manageSnapshots();
+            for (int i = 0; i < postSnapshots.size();) {
+                Long postSnapshot = postSnapshots.get(i);
+                ms_.cherrypick(postSnapshot);
                 if (histSnapshots.contains(postSnapshot)) {
-                    ms.commit();
-                    loadTable();
-                    ms.createTag(snapToTag.get(postSnapshot), getCurrentSnapshotId());
+                    ms_.commit();
+                    iceberg_table.refresh();
+                    ms_ = iceberg_table.manageSnapshots().replaceTag(snapToTag.get(postSnapshot), getCurrentSnapshotId());
                 }
+                i = postSnapshots.lastIndexOf(postSnapshot) + 1;
             }
+            ms_.commit();
         }
 
         System.out.println("Committing");
-        ms.commit();
         return true;
     }
 
