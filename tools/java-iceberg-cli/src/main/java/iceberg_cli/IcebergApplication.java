@@ -194,8 +194,9 @@ public class IcebergApplication {
             break;
         case "rollback":
             boolean force = parser.overwrite();
+            boolean rollbackAll = parser.fetchAll();
             String rollbackTag = parser.getPositionalArg("tag");
-            output = "Operation successful? " + connector.rollbackTable(rollbackTag, force);
+            output = "Operation successful? " + connector.rollbackTable(rollbackTag, rollbackAll, force);
             break;
         default:
             System.err.println("Error: Invalid action");

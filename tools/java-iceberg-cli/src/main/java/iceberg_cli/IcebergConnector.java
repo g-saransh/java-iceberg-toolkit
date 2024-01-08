@@ -1268,7 +1268,7 @@ public class IcebergConnector extends MetastoreConnector
         return true;
     }
 
-    public boolean rollbackTable(String tag, boolean force) throws Exception {
+    public boolean rollbackTable(String tag, boolean all, boolean force) throws Exception {
         if (iceberg_table == null)
             loadTable();
         
@@ -1281,40 +1281,117 @@ public class IcebergConnector extends MetastoreConnector
         }
         
         Map<String, SnapshotRef> refs = iceberg_table.refs();
-        Long snapshotToRollback = refs.get(tag).snapshotId();
+        System.out.println("Received reference map");
+
+        SnapshotRef snapshotToRollback = refs.get(tag);
+        if (snapshotToRollback == null)
+                throw new Exception("Tag (" + tag + ") not found in the table");
+                
+        System.out.println("Received snapshotID for tag");
         List<Long> refSnapshots;
         List<Long> histSnapshots;
+        List<Long> preSnapshots;
+        List<Long> postSnapshots;
+        List<String> tagsToRemove;
         Long targetSnapshot;
+        Map<Long, String> snapToTag;
+        int idx;
 
         try {
             histSnapshots =
                 iceberg_table.history().stream()
                     .map(HistoryEntry::snapshotId)
                     .collect(Collectors.toList());
+            
+            // System.out.println("Received histSnapshots");
+
+            // List<String> hist =
+            //     iceberg_table.history().stream()
+            //         .map(HistoryEntry::toString)
+            //         .collect(Collectors.toList());
+
+            // System.out.println("Received hist");
 
             if (histSnapshots.isEmpty())
                 throw new Exception("The table has no history");
 
             System.out.println("All Snapshot IDs: " + histSnapshots.toString());
+            // if (!hist.isEmpty())
+            //     System.out.println("All history: " + String.join(",", hist));
 
-            if (refs.isEmpty())
-                throw new Exception("The table has no tagged snapshots");
+            // refSnapshots =
+            //     refs.values().stream()
+            //         .map(SnapshotRef::snapshotId)
+            //         .collect(Collectors.toList());
+            // System.out.println("Tagged Snapshot IDs: " + refSnapshots.toString());
+            // System.out.println("Corresponding Tags: " + refs.keySet().toString());
+
+            snapToTag =
+                refs.entrySet().stream()
+                    .filter(e -> e.getValue().isTag())
+                    .collect(Collectors.toMap(entry -> entry.getValue().snapshotId(), entry -> entry.getKey()));
+
+            System.out.println("Snapshot IDs to Tags: " + snapToTag.toString());
+
+            idx = histSnapshots.indexOf(snapshotToRollback.snapshotId());
+            // preSnapshots = histSnapshots.subList(0, (idx - 1));
+            postSnapshots = new ArrayList<>(histSnapshots.subList((idx + 1), histSnapshots.size()));
+            System.out.println("idx: " + idx + ", histSnapshots.size(): " + histSnapshots.size());
+            System.out.println("Initial postSnapshots: " + postSnapshots.toString());
             
-            refSnapshots =
-                refs.values().stream()
-                    .map(SnapshotRef::snapshotId)
-                    .collect(Collectors.toList());
-            System.out.println("Tagged Snapshot IDs: " + refSnapshots.toString());
-
             // history.removeIf(entry -> !refSnapshots.contains(entry.snapshotId()));
-            histSnapshots.removeIf(entry -> !refSnapshots.contains(entry));
-            targetSnapshot = histSnapshots.get(histSnapshots.indexOf(snapshotToRollback) - 1);
+            // histSnapshots.removeIf(entry -> !refSnapshots.contains(entry));
+            histSnapshots.removeIf(entry -> !snapToTag.containsKey(entry));
+
+            //Snapshots are ordered by commit time in iceberg_table.history(), with the latest snapshot being the last.
+            
+            idx = histSnapshots.indexOf(snapshotToRollback.snapshotId());
+            targetSnapshot = histSnapshots.get(idx - 1);
+            histSnapshots.remove(idx);
         } catch (Exception e) {
             e.printStackTrace();
             throw new Exception("Exception while processing snapshots: " + e.getMessage());
         }
 
-        return rollbackToSnapshot(targetSnapshot);
+        System.out.println("Current Snapshot: " + getCurrentSnapshotId().toString());
+        System.out.println("Trying to rollback to targetSnapshot: " + targetSnapshot.toString());
+        // if (!rollbackToSnapshot(targetSnapshot))
+        //     throw new Exception("Error rolling back to snapshot: " + targetSnapshot.toString());
+        ManageSnapshots ms;
+        try {
+            ms = iceberg_table.manageSnapshots().rollbackTo(targetSnapshot).removeTag(tag);
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new Exception("Exception while rolling back: " + e.getMessage());
+        }
+
+        System.out.println("Done rolling back");
+
+        if (all) {
+            // Untag postSnapshots
+            List<Long> snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
+            System.out.println("Untagging Snapshot IDs: " + snapsToUntag.toString());
+            snapsToUntag.stream().map(e -> ms.removeTag(snapToTag.get(e)));
+        } else {
+            // Apply postSnapshots
+            System.out.println("Current Snapshot IDs: " + histSnapshots.toString());
+            System.out.println("Applying Snapshot IDs: ");
+            System.out.println(postSnapshots.toString());
+            // postSnapshots.stream().map(e -> ms.cherrypick(e)); //Cannot do this because we need to tag post commits
+            // replace tags now
+            for (Long postSnapshot : postSnapshots) {
+                ms.cherrypick(postSnapshot);
+                if (histSnapshots.contains(postSnapshot)) {
+                    ms.commit();
+                    loadTable();
+                    ms.createTag(snapToTag.get(postSnapshot), getCurrentSnapshotId());
+                }
+            }
+        }
+
+        System.out.println("Committing");
+        ms.commit();
+        return true;
     }
 
     public Schema getTableSchema() {

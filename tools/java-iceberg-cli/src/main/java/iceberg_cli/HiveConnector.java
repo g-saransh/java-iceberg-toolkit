@@ -303,6 +303,12 @@ public class HiveConnector extends MetastoreConnector
     }
 
     @Override
+    public boolean rollbackTable(String tag, boolean all, boolean force) throws Exception {
+        // TODO Auto-generated method stub
+        throw new Exception("Hive functionality not supported yet.");
+    }
+
+    @Override
     public Schema getTableSchema() {
         List<FieldSchema> schema;
         try {

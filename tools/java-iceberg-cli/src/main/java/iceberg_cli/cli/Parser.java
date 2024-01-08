@@ -136,6 +136,14 @@ public class Parser {
         rewrite.addArgument("data-files", "Data file(s) to delete and data file(s) to add", true);
         m_commands.put("rewrite", rewrite);
 
+        Command rollback = new Command("rollback", "Rollback a tagged transaction from the table, while preserving the transactions that came after");
+        rollback.addOption("--help", "Show this help message and exit");
+        rollback.addOption("--all", "Rollback the succeeding transactions as well");
+        rollback.addOption("--force", "Rollback to the specified tagged commit");
+        rollback.addArgument("identifier", "Table identifier", true);
+        rollback.addArgument("tag", "Tag for the commit", true);
+        m_commands.put("rollback", rollback);
+
         Command search = new Command("search", "Search table for the latest or all tag(s) starting with the input sub tag");
         search.addOption("--help", "Show this help message and exit");
         search.addOption("--all", "Show all matching tags");
