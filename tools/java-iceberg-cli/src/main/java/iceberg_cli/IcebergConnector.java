@@ -1286,7 +1286,8 @@ public class IcebergConnector extends MetastoreConnector
         SnapshotRef snapshotToRollback = refs.get(tag);
         if (snapshotToRollback == null)
                 throw new Exception("Tag (" + tag + ") not found in the table");
-                
+        
+        Long snapshotIdToRollback = snapshotToRollback.snapshotId();        
         List<Long> histSnapshots;
         List<Long> postSnapshots;
         Long targetSnapshot;
@@ -1308,18 +1309,18 @@ public class IcebergConnector extends MetastoreConnector
                     .collect(Collectors.toMap(entry -> entry.getValue().snapshotId(), entry -> entry.getKey()));
 
             // Snapshots are ordered by commit time in iceberg_table.history(), with the latest snapshot being the last.
-            idx = histSnapshots.lastIndexOf(snapshotToRollback.snapshotId());
+            idx = histSnapshots.lastIndexOf(snapshotIdToRollback);
             postSnapshots = new ArrayList<>(histSnapshots.subList((idx + 1), histSnapshots.size()));
             
             // Now only need tagged snapshots
             histSnapshots.removeIf(entry -> !snapToTag.containsKey(entry));
-            idx = histSnapshots.indexOf(snapshotToRollback.snapshotId());
+            idx = histSnapshots.indexOf(snapshotIdToRollback);
             if (idx == 0) {
                 System.out.println("Provided tag corresponds to the first tagged commit. Cannot rollback, exiting!");
                 return false;
             }
             targetSnapshot = histSnapshots.get(idx - 1);
-            histSnapshots.remove(idx);
+            histSnapshots.removeIf(snapshotIdToRollback::equals);
         } catch (Exception e) {
             e.printStackTrace();
             throw new Exception("Exception while processing snapshots: " + e.getMessage());
@@ -1331,7 +1332,8 @@ public class IcebergConnector extends MetastoreConnector
         if (all) {
             // Untag postSnapshots
             List<Long> snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
-            snapsToUntag.stream().map(e -> ms.removeTag(snapToTag.get(e)));
+            for (Long snap : snapsToUntag)
+                ms.removeTag(snapToTag.get(snap));
             ms.commit();
         } else {
             ms.commit();
