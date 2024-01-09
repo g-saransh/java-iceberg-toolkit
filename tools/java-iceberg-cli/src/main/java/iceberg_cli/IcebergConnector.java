@@ -1271,6 +1271,8 @@ public class IcebergConnector extends MetastoreConnector
     public boolean rollbackTable(String tag, boolean all, boolean force) throws Exception {
         if (iceberg_table == null)
             loadTable();
+
+        System.out.println("Starting rollback");
         
         if (force) {
             Snapshot snapshot = iceberg_table.snapshot(tag);
@@ -1281,18 +1283,12 @@ public class IcebergConnector extends MetastoreConnector
         }
         
         Map<String, SnapshotRef> refs = iceberg_table.refs();
-        System.out.println("Received reference map");
-
         SnapshotRef snapshotToRollback = refs.get(tag);
         if (snapshotToRollback == null)
                 throw new Exception("Tag (" + tag + ") not found in the table");
                 
-        System.out.println("Received snapshotID for tag");
-        List<Long> refSnapshots;
         List<Long> histSnapshots;
-        List<Long> preSnapshots;
         List<Long> postSnapshots;
-        List<String> tagsToRemove;
         Long targetSnapshot;
         Map<Long, String> snapToTag;
         int idx;
@@ -1303,49 +1299,25 @@ public class IcebergConnector extends MetastoreConnector
                     .map(HistoryEntry::snapshotId)
                     .collect(Collectors.toList());
             
-            // System.out.println("Received histSnapshots");
-
-            // List<String> hist =
-            //     iceberg_table.history().stream()
-            //         .map(HistoryEntry::toString)
-            //         .collect(Collectors.toList());
-
-            // System.out.println("Received hist");
-
             if (histSnapshots.isEmpty())
                 throw new Exception("The table has no history");
-
-            System.out.println("All Snapshot IDs: " + histSnapshots.toString());
-            // if (!hist.isEmpty())
-            //     System.out.println("All history: " + String.join(",", hist));
-
-            // refSnapshots =
-            //     refs.values().stream()
-            //         .map(SnapshotRef::snapshotId)
-            //         .collect(Collectors.toList());
-            // System.out.println("Tagged Snapshot IDs: " + refSnapshots.toString());
-            // System.out.println("Corresponding Tags: " + refs.keySet().toString());
 
             snapToTag =
                 refs.entrySet().stream()
                     .filter(e -> e.getValue().isTag())
                     .collect(Collectors.toMap(entry -> entry.getValue().snapshotId(), entry -> entry.getKey()));
 
-            System.out.println("Snapshot IDs to Tags: " + snapToTag.toString());
-
+            // Snapshots are ordered by commit time in iceberg_table.history(), with the latest snapshot being the last.
             idx = histSnapshots.lastIndexOf(snapshotToRollback.snapshotId());
-            // preSnapshots = histSnapshots.subList(0, (idx - 1));
             postSnapshots = new ArrayList<>(histSnapshots.subList((idx + 1), histSnapshots.size()));
-            System.out.println("idx: " + idx + ", histSnapshots.size(): " + histSnapshots.size());
-            System.out.println("Initial postSnapshots: " + postSnapshots.toString());
             
-            // history.removeIf(entry -> !refSnapshots.contains(entry.snapshotId()));
-            // histSnapshots.removeIf(entry -> !refSnapshots.contains(entry));
+            // Now only need tagged snapshots
             histSnapshots.removeIf(entry -> !snapToTag.containsKey(entry));
-
-            //Snapshots are ordered by commit time in iceberg_table.history(), with the latest snapshot being the last.
-            
             idx = histSnapshots.indexOf(snapshotToRollback.snapshotId());
+            if (idx == 0) {
+                System.out.println("Provided tag corresponds to the first tagged commit. Cannot rollback, exiting!");
+                return false;
+            }
             targetSnapshot = histSnapshots.get(idx - 1);
             histSnapshots.remove(idx);
         } catch (Exception e) {
@@ -1353,34 +1325,17 @@ public class IcebergConnector extends MetastoreConnector
             throw new Exception("Exception while processing snapshots: " + e.getMessage());
         }
 
-        System.out.println("Current Snapshot: " + getCurrentSnapshotId().toString());
-        System.out.println("Trying to rollback to targetSnapshot: " + targetSnapshot.toString());
-        // if (!rollbackToSnapshot(targetSnapshot))
-        //     throw new Exception("Error rolling back to snapshot: " + targetSnapshot.toString());
         ManageSnapshots ms;
-        try {
-            ms = iceberg_table.manageSnapshots().rollbackTo(targetSnapshot).removeTag(tag);
-        } catch (Exception e) {
-            e.printStackTrace();
-            throw new Exception("Exception while rolling back: " + e.getMessage());
-        }
-
-        System.out.println("Done rolling back");
+        ms = iceberg_table.manageSnapshots().rollbackTo(targetSnapshot).removeTag(tag);
 
         if (all) {
             // Untag postSnapshots
             List<Long> snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
-            System.out.println("Untagging Snapshot IDs: " + snapsToUntag.toString());
             snapsToUntag.stream().map(e -> ms.removeTag(snapToTag.get(e)));
             ms.commit();
         } else {
-            // Apply postSnapshots
-            System.out.println("Current Snapshot IDs: " + histSnapshots.toString());
-            System.out.println("Applying Snapshot IDs: ");
-            System.out.println(postSnapshots.toString());
-            // postSnapshots.stream().map(e -> ms.cherrypick(e)); //Cannot do this because we need to tag post commits
-            // replace tags now
             ms.commit();
+            // Need to apply succeeding transactions again
             ManageSnapshots ms_ = iceberg_table.manageSnapshots();
             for (int i = 0; i < postSnapshots.size();) {
                 Long postSnapshot = postSnapshots.get(i);
@@ -1395,7 +1350,7 @@ public class IcebergConnector extends MetastoreConnector
             ms_.commit();
         }
 
-        System.out.println("Committing");
+        System.out.println("Rollback Complete!");
         return true;
     }
 
