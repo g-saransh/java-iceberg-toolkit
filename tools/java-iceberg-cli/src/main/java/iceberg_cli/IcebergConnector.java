@@ -1276,16 +1276,20 @@ public class IcebergConnector extends MetastoreConnector
         
         if (force) {
             Snapshot snapshot = iceberg_table.snapshot(tag);
-            if (snapshot == null)
-                throw new Exception("Tag " + tag + " not present in the table");
+            if (snapshot == null) {
+                System.out.println("Tag (" + tag + ") not found in the table");
+                return false;
+            }
             
             return rollbackToSnapshot(snapshot.snapshotId());
         }
         
         Map<String, SnapshotRef> refs = iceberg_table.refs();
         SnapshotRef snapshotToRollback = refs.get(tag);
-        if (snapshotToRollback == null)
-                throw new Exception("Tag (" + tag + ") not found in the table");
+        if (snapshotToRollback == null) {
+            System.out.println("Tag (" + tag + ") not found in the table");
+            return false;
+        }
         
         Long snapshotIdToRollback = snapshotToRollback.snapshotId();        
         List<Long> histSnapshots;
@@ -1300,8 +1304,10 @@ public class IcebergConnector extends MetastoreConnector
                     .map(HistoryEntry::snapshotId)
                     .collect(Collectors.toList());
             
-            if (histSnapshots.isEmpty())
-                throw new Exception("The table has no history");
+            if (histSnapshots.isEmpty()) {
+                System.out.println("Trying rollback on a table with no history");
+                return false;
+            }
 
             snapToTag =
                 refs.entrySet().stream()
