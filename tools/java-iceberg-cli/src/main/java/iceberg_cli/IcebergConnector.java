@@ -1055,7 +1055,10 @@ public class IcebergConnector extends MetastoreConnector
 
         // Rewrite data files
         System.out.println("Starting Txn");
-        rewrite.rewriteFiles(oldDataFiles, newDataFiles);
+        for (DataFile dataFile : oldDataFiles)
+            rewrite.deleteFile(dataFile);
+        for (DataFile dataFile : newDataFiles)
+            rewrite.addFile(dataFile);
         rewrite.commit();
         transaction.commitTransaction();
         io.close();
@@ -1093,7 +1096,10 @@ public class IcebergConnector extends MetastoreConnector
     public RewriteFiles opRewrite(RewriteFiles rewrite, FileIO io, JSONArray files_to_del, JSONArray files_to_add) throws Exception {
         Set<DataFile> oldDataFiles = getDataFileSet(io, files_to_del);
         Set<DataFile> newDataFiles = getDataFileSet(io, files_to_add);
-        rewrite.rewriteFiles(oldDataFiles, newDataFiles);
+        for (DataFile dataFile : oldDataFiles)
+            rewrite.deleteFile(dataFile);
+        for (DataFile dataFile : newDataFiles)
+            rewrite.addFile(dataFile);
         return rewrite;
     }
 
@@ -1115,8 +1121,6 @@ public class IcebergConnector extends MetastoreConnector
     public boolean tableTransaction(String transactionData) throws Exception {
         if (iceberg_table == null)
             loadTable();
-
-        PartitionSpec ps = iceberg_table.spec();
 
         FileIO io;
         if (transactionData.contains("s3a://")) {
