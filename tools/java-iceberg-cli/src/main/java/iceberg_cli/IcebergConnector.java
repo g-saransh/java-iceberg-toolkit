@@ -18,6 +18,7 @@ import java.nio.ByteBuffer;
 
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 
@@ -52,7 +53,6 @@ import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.io.OutputFile;
-import org.apache.iceberg.io.ResolvingFileIO;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.parquet.ParquetUtil;
 import org.apache.iceberg.hive.HiveCatalog;
@@ -1126,10 +1126,7 @@ public class IcebergConnector extends MetastoreConnector
         if (transactionData.contains("s3a://")) {
             io = initS3FileIO();
         } else {
-            ResolvingFileIO ioR = new ResolvingFileIO();
-            ioR.setConf(m_catalog.getConf());
-            io = ioR;
-            ioR.close();
+            io = new HadoopFileIO(m_catalog.getConf());
         }
        
         System.out.println("Starting Txn");
