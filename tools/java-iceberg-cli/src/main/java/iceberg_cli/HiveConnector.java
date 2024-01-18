@@ -279,7 +279,7 @@ public class HiveConnector extends MetastoreConnector
     }
 
     @Override
-    public boolean tableTransaction(String transactionData) throws Exception {
+    public boolean tableTransaction(String transactionData, String tag) throws Exception {
         // TODO Auto-generated method stub
         throw new Exception("Hive functionality not supported yet.");
     }

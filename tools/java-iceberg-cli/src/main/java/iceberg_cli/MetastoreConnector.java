@@ -77,7 +77,7 @@ public abstract class MetastoreConnector
 
     public abstract boolean rewriteFiles(String dataFileName) throws Exception;
 
-    public abstract boolean tableTransaction(String transactionData) throws Exception;
+    public abstract boolean tableTransaction(String transactionData, String tag) throws Exception;
 
     public abstract boolean truncateTable(boolean overwrite) throws Exception;
 
