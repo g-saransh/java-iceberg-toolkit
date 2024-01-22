@@ -7,6 +7,7 @@ package iceberg_cli;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import java.io.File;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -33,6 +34,7 @@ import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
+import org.apache.iceberg.DataOperations;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.DeleteFiles;
 import org.apache.iceberg.FileFormat;
@@ -65,6 +67,7 @@ import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotRef;
+import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableScan;
@@ -72,6 +75,7 @@ import org.apache.iceberg.Transaction;
 import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.UpdateProperties;
 import org.apache.iceberg.aws.s3.S3FileIO;
+import org.apache.iceberg.aws.s3.S3FileIOProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.types.Conversions;
@@ -1272,6 +1276,45 @@ public class IcebergConnector extends MetastoreConnector
             return Collections.max(tags);
     }
 
+    public Long reapplySnapshot (Transaction transaction, Long snapId) throws Exception {
+        Snapshot snapshot = iceberg_table.snapshot(snapId);
+        Long newSnapId = null;
+        if (snapshot.operation().equals(DataOperations.OVERWRITE)) {
+            // Currently works only for RowDeltaAPI Operation
+            // Cherrypcik already manages AppendAPI Operation
+            // TODO: Expand to accommodate OverwriteAPI and DeleteAPI operations
+            RowDelta rowDelta = transaction.newRowDelta();
+            FileIO io;
+            if (getTableLocation().contains("s3a://")) {
+                io = initS3FileIO();
+            } else {
+                io = new HadoopFileIO(m_catalog.getConf());
+            }
+            Map <String, String> properties = Maps.newHashMap();
+            io.initialize(properties);
+            java.lang.Iterable<DataFile> addedDataFiles​;
+            java.lang.Iterable<DeleteFile> addedDeleteFiles​;
+            try {
+                addedDataFiles​ = snapshot.addedDataFiles(io);
+                addedDeleteFiles​ = snapshot.addedDeleteFiles(io);
+            } catch (Exception e) {
+                throw new Exception("Exception while getting snapshot data: " + e.getMessage()); 
+            }
+            for (DeleteFile deleteFile : addedDeleteFiles​)
+                rowDelta.addDeletes(deleteFile);
+            for (DataFile dataFile : addedDataFiles​)
+                rowDelta.addRows(dataFile);
+            newSnapId = rowDelta.apply().snapshotId();
+            rowDelta.commit();
+        }
+        else {
+            ManageSnapshots ms = transaction.manageSnapshots();
+            newSnapId = ms.cherrypick(snapId).apply().snapshotId();
+            ms.commit();
+        }
+        return newSnapId;
+    }
+
     public boolean rollbackToSnapshot(Long snapshotId) throws Exception {
         if (iceberg_table == null)
             loadTable();
@@ -1298,80 +1341,95 @@ public class IcebergConnector extends MetastoreConnector
             
             return rollbackToSnapshot(snapshot.snapshotId());
         }
-        
+
         Map<String, SnapshotRef> refs = iceberg_table.refs();
-        SnapshotRef snapshotToRollback = refs.get(tag);
-        if (snapshotToRollback == null) {
+        Set<String> keyRefs = new HashSet<String>(refs.keySet());
+        keyRefs.removeIf(key -> !key.startsWith(tag));
+        if (keyRefs.size() == 0) {
             System.out.println("Tag (" + tag + ") not found in the table");
             return false;
         }
-        
-        Long snapshotIdToRollback = snapshotToRollback.snapshotId();        
+        Long firstSnapshotIdToRollback = refs.get(Collections.min(keyRefs)).snapshotId();
+        Long lastSnapshotIdToRollback = refs.get(Collections.max(keyRefs)).snapshotId();
+
         List<Long> histSnapshots;
         List<Long> postSnapshots;
+        List<Long> snapsToUntag;
         Long targetSnapshot;
-        Map<Long, String> snapToTag;
+        Map<Long, String> snapIdToTag;
         int idx;
 
         try {
-            histSnapshots =
-                iceberg_table.history().stream()
-                    .map(HistoryEntry::snapshotId)
-                    .collect(Collectors.toList());
-            
-            if (histSnapshots.isEmpty()) {
-                System.out.println("Trying rollback on a table with no history");
+            //TreeMap is sorted according to keys
+            TreeMap<Long, Long> allSnapsWithTime = new TreeMap<Long, Long>(
+                StreamSupport.stream(iceberg_table.snapshots().spliterator(), false)
+                    .collect(Collectors.toMap(e -> e.timestampMillis(), e -> e.snapshotId())));
+
+            if (allSnapsWithTime.isEmpty()) {
+                System.out.println("Rolling back a table with no history");
                 return false;
             }
 
-            snapToTag =
-                refs.entrySet().stream()
-                    .filter(e -> e.getValue().isTag())
-                    .collect(Collectors.toMap(entry -> entry.getValue().snapshotId(), entry -> entry.getKey()));
-
-            // Snapshots are ordered by commit time in iceberg_table.history(), with the latest snapshot being the last.
-            idx = histSnapshots.lastIndexOf(snapshotIdToRollback);
+            histSnapshots = new ArrayList<>(allSnapsWithTime.values());
+            idx = histSnapshots.lastIndexOf(lastSnapshotIdToRollback);
+            // postSnashots should have all the snapshots that need to be cherrypicked to maintain tail
             postSnapshots = new ArrayList<>(histSnapshots.subList((idx + 1), histSnapshots.size()));
-            
-            // Now only need tagged snapshots
-            histSnapshots.removeIf(entry -> !snapToTag.containsKey(entry));
-            idx = histSnapshots.indexOf(snapshotIdToRollback);
+
+            idx = histSnapshots.indexOf(firstSnapshotIdToRollback);
             if (idx == 0) {
                 System.out.println("Provided tag corresponds to the first tagged commit. Cannot rollback, exiting!");
                 return false;
             }
             targetSnapshot = histSnapshots.get(idx - 1);
-            histSnapshots.removeIf(snapshotIdToRollback::equals);
+
+            // Now only need tagged snapshots
+            for (String keyRef : keyRefs) {
+                Long snapId = refs.get(keyRef).snapshotId();
+                histSnapshots.removeIf(snapId::equals);
+            }
+            
+            // snapIdtoTag maps snapshotId to the corresponding tag
+            snapIdToTag =
+                refs.entrySet().stream()
+                    .filter(e -> e.getValue().isTag())
+                    .collect(Collectors.toMap(entry -> entry.getValue().snapshotId(), entry -> entry.getKey()));
+            
+            snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
+            snapsToUntag.removeIf(entry -> !snapIdToTag.containsKey(entry));
         } catch (Exception e) {
-            e.printStackTrace();
             throw new Exception("Exception while processing snapshots: " + e.getMessage());
         }
 
-        ManageSnapshots ms;
-        ms = iceberg_table.manageSnapshots().rollbackTo(targetSnapshot).removeTag(tag);
+        Transaction transaction = iceberg_table.newTransaction();
+        ManageSnapshots ms = transaction.manageSnapshots().rollbackTo(targetSnapshot);
+        // Cleaning up tags corresponding to removed snapshots
+        for (String keyRef : keyRefs)
+            ms.removeTag(keyRef);
 
         if (all) {
-            // Untag postSnapshots
-            List<Long> snapsToUntag = histSnapshots.subList(idx, histSnapshots.size());
+            // Not keeping tail
+            // Untag all snapshots after firstSnapshotIdToRollback
             for (Long snap : snapsToUntag)
-                ms.removeTag(snapToTag.get(snap));
+                ms.removeTag(snapIdToTag.get(snap));
             ms.commit();
         } else {
             ms.commit();
-            // Need to apply succeeding transactions again
-            ManageSnapshots ms_ = iceberg_table.manageSnapshots();
+            // Need to apply tail again
             for (int i = 0; i < postSnapshots.size();) {
-                Long postSnapshot = postSnapshots.get(i);
-                ms_.cherrypick(postSnapshot);
-                if (histSnapshots.contains(postSnapshot)) {
+                Long postSnapshotId = postSnapshots.get(i);
+                Long newSnapId = null;
+                newSnapId = reapplySnapshot (transaction, postSnapshotId);
+
+                if (snapsToUntag.contains(postSnapshotId)) {
+                    // Update the snapshotId for the tag
+                    ManageSnapshots ms_ = transaction.manageSnapshots();
+                    ms_.replaceTag(snapIdToTag.get(postSnapshotId), newSnapId);
                     ms_.commit();
-                    iceberg_table.refresh();
-                    ms_ = iceberg_table.manageSnapshots().replaceTag(snapToTag.get(postSnapshot), getCurrentSnapshotId());
                 }
-                i = postSnapshots.lastIndexOf(postSnapshot) + 1;
+                i = postSnapshots.lastIndexOf(postSnapshotId) + 1;
             }
-            ms_.commit();
         }
+        transaction.commitTransaction();
 
         System.out.println("Rollback Complete!");
         return true;
